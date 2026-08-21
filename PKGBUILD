@@ -3,19 +3,20 @@
 # Contributor: 37h4n (aarch64 support added by Ethan Reece <aur at ethanreece dot com>)
 # Contributor: sh!zeeg (shizeeque@gmail.com) support for non-avx2 CPUs, shell completions.
 pkgname=bun-bin
-pkgver=1.3.14
+pkgver=1.4.0
 pkgrel=1
 pkgdesc="All-in-one JavaScript runtime built for speed, with bundler, transpiler, test runner, and package manager. Includes bunx, shell completions and support for baseline CPUs"
 arch=('x86_64' 'aarch64')
 url="https://github.com/oven-sh/bun"
 license=('MIT')
+depends=('glibc')
 provides=('bun')
 conflicts=('bun')
 options=('!debug')
-sha256sums_x86_64=('951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f'
-                   'a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7'
+sha256sums_x86_64=('2d03fb5fb83ac8b567aca0a281b2ce1a1a19d488f56c2968d88c3f25e92fe452'
+                   '184fb4595f0d401a217cf7c78c1bc430ba83314dab7a8b94805babbf7fa7097f'
                    '9b296bcc20090b5ea079dc1bca15913a32246121169bcf54cbdb7384d6f5b32b')
-sha256sums_aarch64=('a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b'
+sha256sums_aarch64=('4b1a332ee861983eb93bcfe6f770fff94e3e31b2c388bdaea3c8ed35e58eed0e'
                     '9b296bcc20090b5ea079dc1bca15913a32246121169bcf54cbdb7384d6f5b32b')
 source_x86_64=(
 "bun-x64.zip::https://github.com/oven-sh/bun/releases/download/bun-v${pkgver}/bun-linux-x64.zip"
