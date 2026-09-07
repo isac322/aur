@@ -4,11 +4,12 @@
 _pkgname=openvpn3-linux
 pkgname=openvpn3
 pkgver=27.1
-pkgrel=1
+pkgrel=2
 pkgdesc='OpenVPN 3 Linux client'
 arch=('x86_64' 'aarch64')
 url="https://codeberg.org/OpenVPN/$_pkgname"
-license=('AGPL3')
+license=('AGPL-3.0-only')
+conflicts=('openvpn3-git')
 depends=(
   'glib2>=2.56' 'jsoncpp>=0.10.5' 'libcap-ng>=0.7.5' 'lz4>=1.8.4' 'util-linux-libs>=2.23.2' 'protobuf>=2.4.0'
   'python-dbus' 'python-gobject' 'python-systemd' 'tinyxml2>=2.1.0' 'libnl>=3.2.29' 'gdbuspp>=3' 
