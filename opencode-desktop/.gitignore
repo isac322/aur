@@ -1,0 +1,10 @@
+pkg/
+src/
+*.pkg.tar.zst
+*.pkg.tar.zst.sig
+*.tar.gz
+.cache/
+
+# makepkg's git bare clone cache (named after pkgname)
+/opencode-desktop/
+/opencode-desktop-electron/
