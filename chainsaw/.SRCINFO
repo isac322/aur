@@ -1,0 +1,16 @@
+pkgbase = chainsaw
+	pkgdesc = Declarative Kubernetes end-to-end testing framework
+	pkgver = 0.2.15
+	pkgrel = 1
+	url = https://github.com/kyverno/chainsaw
+	arch = x86_64
+	arch = aarch64
+	license = Apache-2.0
+	makedepends = go
+	depends = glibc
+	conflicts = chainsaw-bin
+	options = !lto
+	source = chainsaw-0.2.15.tar.gz::https://github.com/kyverno/chainsaw/archive/v0.2.15.tar.gz
+	sha256sums = 04f3fc7dd8e958e4fc7d73383bc22b05827240dd2fe7a8e32ee99d8c0332da2a
+
+pkgname = chainsaw
