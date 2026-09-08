@@ -1,0 +1,22 @@
+pkgbase = python-tcafe-attending-bot
+	pkgdesc = Auto attending bot for TCafe
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/isac322/tcafe-attending-bot
+	arch = any
+	license = MIT
+	makedepends = python-build
+	makedepends = python-flit-core
+	makedepends = python-installer
+	depends = python
+	depends = python-aiohttp
+	depends = python-beautifulsoup4
+	depends = python-xdg-base-dirs
+	source = tcafe-attending-bot-1.0.0.tar.gz::https://files.pythonhosted.org/packages/source/t/tcafe-attending-bot/tcafe_attending_bot-1.0.0.tar.gz
+	source = tcafe-attending-bot.service
+	source = tcafe-attending-bot.timer
+	sha256sums = 5f8cfb0758c0ea4c2eee1eb439cdfb17f032e9a528487d3cbe3256460024aa19
+	sha256sums = 31a606b3b3e1b859ec6a5ab5261e2c319b12c279c549762f717ebf61b7decf92
+	sha256sums = f38b677fd6083259cce73127a307ac51bdc5599b20882362455d849868a24445
+
+pkgname = python-tcafe-attending-bot
