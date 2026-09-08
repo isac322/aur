@@ -1,0 +1,53 @@
+diff --git a/libvmaf/src/meson.build b/libvmaf/src/meson.build
+index 7446f2c..6877e17 100644
+--- a/libvmaf/src/meson.build
++++ b/libvmaf/src/meson.build
+@@ -257,7 +257,7 @@ libvmaf_include = include_directories(
+     src_dir,
+     feature_src_dir,
+     feature_src_dir + 'common',
+-    is_nvtx_enabled ? '/usr/local/cuda/include' : '',
++    is_nvtx_enabled ? '/usr/include' : '',
+ )
+ 
+ libvmaf_cpu_static_lib = static_library(
+@@ -334,7 +334,7 @@ cuda_inc = []
+ if is_nvtx_enabled
+     cuda_dependency += declare_dependency(
+         link_with: shared_library('dl'),
+-        include_directories: include_directories('/usr/local/cuda/include'))
++        include_directories: include_directories('/usr/include'))
+ endif
+ 
+ if is_cuda_enabled
+@@ -426,11 +426,11 @@ if is_cuda_enabled
+                 '@INPUT@',
+                 '-o', '@OUTPUT@' ,
+                 '-I', './src',
+-                '-I', '../src',
+-                '-I', '../include',
+-                '-I', '../src/feature',
+-                '-I', '../src/' + cuda_dir,
++                '-I', meson.current_source_dir(),
++                '-I', meson.current_source_dir() + '/../include',
++                '-I', meson.current_source_dir() + '/feature',
++                '-I', meson.current_source_dir() + '/' + cuda_dir,
+                 '-DDEVICE_CODE',
+             ] + cuda_flags
+         )
+
+diff --git a/libvmaf/test/meson.build b/libvmaf/test/meson.build
+index 13c25f3..b7924a4 100644
+--- a/libvmaf/test/meson.build
++++ b/libvmaf/test/meson.build
+@@ -195,8 +195,8 @@ test_cuda_pic_preallocation = executable('test_cuda_pic_preallocation',
+     c_args: ['-DHAVE_CUDA=1']
+ )
+ 
+-test('test_ring_buffer', test_ring_buffer)
+-test('test_cuda_pic_preallocation', test_cuda_pic_preallocation)
++test('test_ring_buffer', test_ring_buffer, suite: 'cuda')
++test('test_cuda_pic_preallocation', test_cuda_pic_preallocation, suite: 'cuda')
+ endif
+ 
+ test_pic_preallocation = executable('test_pic_preallocation',
