@@ -1,0 +1,21 @@
+pkgbase = posthog-cli
+	pkgdesc = The command line interface for PostHog
+	pkgver = 0.18.1
+	pkgrel = 1
+	url = https://github.com/PostHog/posthog
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = cargo
+	makedepends = nodejs>=24
+	makedepends = pnpm
+	depends = glibc
+	depends = gcc-libs
+	depends = zlib
+	optdepends = nodejs: required for the posthog-cli api command
+	conflicts = posthog-cli-bin
+	options = !lto
+	source = posthog-cli-v0.18.1.tar.gz::https://github.com/PostHog/posthog/archive/refs/tags/posthog-cli%2Fv0.18.1.tar.gz
+	sha256sums = a8a61cc58d408c2c2e304b5b34790c820e80492a1e6a5ef18990d998fe86d516
+
+pkgname = posthog-cli
