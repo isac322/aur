@@ -141,16 +141,15 @@ Python은 archive 안 `site-packages`를 `PYTHONPATH`에 넣고 entry point를 �
 
 ## Step 6: Git 동기화와 배포
 
-commit/push 승인이 있는 package만 Step 1의 AUR remote로 진행한다.
+commit/push 승인이 있는 package만 AUR 배포를 진행한다.
 
-1. commit 직전에 AUR `refs/heads/master`를 fetch하고 원격 PKGBUILD, `.SRCINFO`, dependency, build/package, service와 patch 변경을 검토한다.
-2. remote-ahead에 uncommitted 변경이면 원격 master의 clean worktree에 이번 필드 변경만 재적용하고 Step 5를 반복하며, 자동 stash/reset과 파일 전체 ours/theirs는 쓰지 않는다.
-3. 이번 실행 commit 뒤에 remote가 앞섰다면 이번 실행 commit만 master 위로 재배치할 수 있다. 실행 전 사용자 commit이나 불명확한 divergence는 `remote_conflict`다.
-4. 통합 후 Step 2의 push 직전 freshness와 Step 5를 반복하고 `git diff --check`까지 확인한다.
-5. `git merge-base --is-ancestor <aur-remote>/master HEAD`로 선형 계승을 확인하며 원격 변경을 포함하지 않은 HEAD는 push하지 않는다.
-6. 승인되고 검증된 package별 변경 파일만 commit하고 build archive, `src/`, `pkg/`, 실행 전 사용자 파일과 무관한 변경을 제외한다. commit 메시지에는 자동 attribution footer를 넣지 않는다.
-7. 검증된 HEAD를 `git push <aur-remote> HEAD:master`로 push한다.
-8. package별 실패를 독립 처리해 한 실패 때문에 다른 검증 완료 package를 누락하지 않는다.
+1. 모노레포 루트에서 패키지 파일만 독립 커밋한다: `git add <pkg>/PKGBUILD <pkg>/.SRCINFO && git commit -m "..."`
+2. commit 메시지에는 자동 attribution footer를 넣지 않는다. 여러 패키지를 한 커밋에 묶지 않는다.
+3. AUR 원격 최신 상태를 fetch한다: `git fetch "ssh://aur@aur.archlinux.org/<pkgbase>.git" master`
+4. 서브트리를 분리해 배포용 가상 커밋을 생성한다: `sha=$(git subtree split --prefix=<path>)`
+5. 사전 검증: `git ls-tree "$sha"`로 루트 위치 확인, `git merge-base --is-ancestor FETCH_HEAD "$sha"`로 fast-forward 계승을 확인한다.
+6. 검증된 커밋을 AUR 원격으로 직접 푸시한다: `git push "ssh://aur@aur.archlinux.org/<pkgbase>.git" "$sha:master"`
+7. package별 실패를 독립 처리해 한 실패 때문에 다른 검증 완료 package를 누락하지 않는다.
 
 ## Step 7: AUR 반영 확인
 
