@@ -1,0 +1,124 @@
+# Maintainer: Byeonghoon Yoo <bhyoo at bhyoo dot com>
+
+# Note: the license= field reflects upstream package.json's self-declaration of
+#       "MIT". Upstream does not ship a LICENSE file in the repository, so no
+#       license text is installed under /usr/share/licenses/. namcap will flag
+#       "Uncommon license identifiers such as 'MIT' require license files" — this
+#       is the intended state until upstream <https://github.com/rynfar/meridian/issues>
+#       adds a canonical LICENSE file.
+
+pkgname=meridian
+pkgver=1.68.0
+pkgrel=1
+pkgdesc='Local Anthropic API powered by your Claude Max subscription'
+arch=('x86_64' 'aarch64')
+url='https://github.com/rynfar/meridian'
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'nodejs>=22')
+makedepends=('bun')
+provides=('claude-max-proxy')
+conflicts=('claude-max-proxy')
+options=('!strip' '!debug')
+install="${pkgname}.install"
+
+_tag="meridian-v${pkgver}"
+_archive_subdir="${pkgname}-${_tag}"
+
+source=(
+  "${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/${_tag}.tar.gz"
+  "${pkgname}.service"
+)
+sha256sums=('dadc6aa9779271f7c83beb6f566629dd590fa9e01ff80d309ce64c11f6b71848'
+            '214cb5117909c4c67be2e6f2a8031856a7bb05814093d0d39486027e11873b75')
+
+prepare() {
+  cd "${srcdir}"
+  if [[ -d "${_archive_subdir}" && ! -d "${pkgname}-${pkgver}" ]]; then
+    mv "${_archive_subdir}" "${pkgname}-${pkgver}"
+  fi
+}
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  export BUN_INSTALL_CACHE_DIR="${srcdir}/.bun-cache"
+  bun install --frozen-lockfile --linker=hoisted
+  bun run build
+
+  # Bun bundles libsql's CommonJS loader and freezes its build-time __dirname.
+  # Relocate that path and its dynamic native-module require to the installed
+  # node_modules tree. Match the generated code instead of a hashed chunk name,
+  # and fail if upstream or Bun changes the expected bundle shape.
+  local _libsql_build_dir="${srcdir}/${pkgname}-${pkgver}/node_modules/libsql"
+  local _libsql_runtime_dir="/usr/lib/${pkgname}/node_modules/libsql"
+  local _libsql_dir_decl="var __dirname = \"${_libsql_build_dir}\";"
+  local _libsql_runtime_decl="var __dirname = \"${_libsql_runtime_dir}\";"
+  local _libsql_native_require='return __require(`@libsql/${target}`);'
+  local _libsql_runtime_require='return __require(`${__dirname}/../@libsql/${target}`);'
+  local -a _libsql_bundles
+
+  mapfile -t _libsql_bundles < <(grep -rlF -- "${_libsql_dir_decl}" dist)
+  if (( ${#_libsql_bundles[@]} != 1 )); then
+    printf 'ERROR: expected exactly one bundled libsql build path, found %d\n' \
+      "${#_libsql_bundles[@]}" >&2
+    return 1
+  fi
+  if [[ $(grep -Fc -- "${_libsql_dir_decl}" "${_libsql_bundles[0]}") -ne 1 ||
+        $(grep -Fc -- "${_libsql_native_require}" "${_libsql_bundles[0]}") -ne 1 ]]; then
+    printf 'ERROR: unexpected bundled libsql loader shape in %s\n' \
+      "${_libsql_bundles[0]}" >&2
+    return 1
+  fi
+
+  sed -i \
+    -e "s|${_libsql_dir_decl}|${_libsql_runtime_decl}|" \
+    -e "s|${_libsql_native_require}|${_libsql_runtime_require}|" \
+    "${_libsql_bundles[0]}"
+
+  if [[ $(grep -Fc -- "${_libsql_runtime_decl}" "${_libsql_bundles[0]}") -ne 1 ||
+        $(grep -Fc -- "${_libsql_runtime_require}" "${_libsql_bundles[0]}") -ne 1 ]] ||
+     grep -rFq -- "${srcdir}" dist; then
+    printf 'ERROR: failed to relocate bundled libsql loader to %s\n' \
+      "${_libsql_runtime_dir}" >&2
+    return 1
+  fi
+  # Reinstall with production-only deps so the shipped node_modules tree is
+  # free of devDependencies (bun2nix, typescript, @types/*, etc.). dist/ from
+  # the build above is preserved.
+  rm -rf node_modules
+  bun install --production --frozen-lockfile --linker=hoisted
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+
+  install -d "${pkgdir}/usr/lib/${pkgname}"
+  # Preserve hardlinks that bun's hoisted linker creates between identical
+  # vendor binaries (e.g. claude-code/bin/claude.exe and
+  # claude-code-linux-x64/claude). This keeps each binary stored once in the
+  # tarball, saving ~200 MB. namcap will flag a "Cross-directory hardlink in
+  # package" E for this — that's a lint advisory; ALPM/pacman extracts
+  # hardlinks correctly on every common filesystem (ext4/btrfs/xfs/zfs).
+  cp -a dist node_modules plugin "${pkgdir}/usr/lib/${pkgname}/"
+  install -Dm644 package.json "${pkgdir}/usr/lib/${pkgname}/package.json"
+
+  # Drop musl-libc variant binaries — Arch is glibc-only and these are never
+  # loaded here (saves ~100 MB compressed).
+  find "${pkgdir}/usr/lib/${pkgname}/node_modules" -maxdepth 3 -type d \
+    -name '*-musl*' -exec rm -rf {} +
+
+  # bun install leaves files with mode 0666 (world-writable). Tighten so the
+  # package matches Arch's expected permissions.
+  chmod -R go-w "${pkgdir}/usr/lib/${pkgname}"
+
+  install -Dm755 /dev/stdin "${pkgdir}/usr/bin/${pkgname}" <<'WRAPPER'
+#!/bin/sh
+exec /usr/bin/node /usr/lib/meridian/dist/cli.js "$@"
+WRAPPER
+
+  ln -s "${pkgname}" "${pkgdir}/usr/bin/claude-max-proxy"
+
+  install -Dm644 "${srcdir}/${pkgname}.service" \
+    "${pkgdir}/usr/lib/systemd/user/${pkgname}.service"
+
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}

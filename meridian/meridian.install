@@ -1,0 +1,36 @@
+post_install() {
+  cat <<'EOF'
+==> meridian installed.
+
+  First-run setup (interactive, run in your terminal session):
+      meridian setup
+      meridian profile login
+
+  To run as a user systemd service (auto-start at login):
+      systemctl --user daemon-reload
+      systemctl --user enable --now meridian.service
+      systemctl --user status meridian.service
+
+  Customize environment (port, host, telemetry, ...):
+      systemctl --user edit meridian.service
+    See /usr/lib/systemd/user/meridian.service for available variables.
+
+  Default endpoint: http://127.0.0.1:3456
+EOF
+}
+
+post_upgrade() {
+  cat <<'EOF'
+==> meridian upgraded. If the systemd unit changed, reload + restart:
+      systemctl --user daemon-reload
+      systemctl --user try-restart meridian.service
+EOF
+}
+
+post_remove() {
+  cat <<'EOF'
+==> meridian removed. User configuration and credentials in
+      ~/.config/meridian/    ~/.local/share/meridian/
+    are preserved. Remove manually if no longer needed.
+EOF
+}

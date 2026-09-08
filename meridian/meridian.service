@@ -1,0 +1,25 @@
+[Unit]
+Description=Meridian - Local Anthropic API proxy
+Documentation=https://github.com/rynfar/meridian
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/meridian
+Restart=on-failure
+RestartSec=5
+
+# To customize, run:  systemctl --user edit meridian.service
+# and add e.g.:
+#   [Service]
+#   Environment=MERIDIAN_PORT=8080
+#   Environment=MERIDIAN_HOST=127.0.0.1
+#   Environment=MERIDIAN_IDLE_TIMEOUT_SECONDS=120
+#   Environment=MERIDIAN_PASSTHROUGH=true
+#   Environment=MERIDIAN_DEFAULT_AGENT=opencode
+#   Environment=MERIDIAN_SONNET_MODEL=sonnet[1m]
+#   Environment=MERIDIAN_TELEMETRY_PERSIST=1
+#   Environment=MERIDIAN_TELEMETRY_RETENTION_DAYS=30
+
+[Install]
+WantedBy=default.target

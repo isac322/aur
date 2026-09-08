@@ -1,0 +1,23 @@
+pkgbase = meridian
+	pkgdesc = Local Anthropic API powered by your Claude Max subscription
+	pkgver = 1.68.0
+	pkgrel = 1
+	url = https://github.com/rynfar/meridian
+	install = meridian.install
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = bun
+	depends = gcc-libs
+	depends = glibc
+	depends = nodejs>=22
+	provides = claude-max-proxy
+	conflicts = claude-max-proxy
+	options = !strip
+	options = !debug
+	source = meridian-1.68.0.tar.gz::https://github.com/rynfar/meridian/archive/refs/tags/meridian-v1.68.0.tar.gz
+	source = meridian.service
+	sha256sums = dadc6aa9779271f7c83beb6f566629dd590fa9e01ff80d309ce64c11f6b71848
+	sha256sums = 214cb5117909c4c67be2e6f2a8031856a7bb05814093d0d39486027e11873b75
+
+pkgname = meridian

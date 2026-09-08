@@ -1,0 +1,17 @@
+# Maintainer: Byeonghoon Isac Yoo <bhyoo@bhyoo.com>
+
+pkgname=ttf-segoe-ui
+pkgver=1.0
+pkgrel=3
+pkgdesc='Microsoft Segoe UI font family for Windows user interfaces'
+arch=('any')
+license=('LicenseRef-EULA')
+url='https://docs.microsoft.com/windows/apps/design/downloads/#fonts'
+source=('https://aka.ms/segoeuifont')
+sha256sums=('83c6671a2e891da8a3032d2e0aff99a8592d3257a06c943e556c33202f280374')
+
+package() {
+    install -Dm644 -t "$pkgdir/usr/share/fonts/TTF" "$srcdir"/Segoe*.ttf
+    install -Dm644 "$srcdir/EULA.txt" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+

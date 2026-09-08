@@ -1,0 +1,11 @@
+pkgbase = ttf-segoe-ui
+	pkgdesc = Microsoft Segoe UI font family for Windows user interfaces
+	pkgver = 1.0
+	pkgrel = 3
+	url = https://docs.microsoft.com/windows/apps/design/downloads/#fonts
+	arch = any
+	license = LicenseRef-EULA
+	source = https://aka.ms/segoeuifont
+	sha256sums = 83c6671a2e891da8a3032d2e0aff99a8592d3257a06c943e556c33202f280374
+
+pkgname = ttf-segoe-ui
