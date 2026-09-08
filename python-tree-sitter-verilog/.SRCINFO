@@ -1,0 +1,18 @@
+pkgbase = python-tree-sitter-verilog
+	pkgdesc = Verilog grammar for tree-sitter
+	pkgver = 1.0.3
+	pkgrel = 9
+	url = https://github.com/tree-sitter/tree-sitter-verilog
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-wheel
+	makedepends = python-setuptools
+	depends = python
+	depends = python-tree-sitter
+	source = python-tree-sitter-verilog-1.0.3.tar.gz::https://github.com/tree-sitter/tree-sitter-verilog/archive/refs/tags/v1.0.3.tar.gz
+	sha256sums = 2b985c74fa7d0035db7415908935cf1ba7eea3d928ccebfa1d89541d5b6fa7b4
+
+pkgname = python-tree-sitter-verilog
