@@ -1,0 +1,18 @@
+pkgbase = python-tree-sitter-powershell
+	pkgdesc = Powershell grammar for tree-sitter
+	pkgver = 0.26.5
+	pkgrel = 3
+	url = https://github.com/airbus-cert/tree-sitter-powershell
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-wheel
+	makedepends = python-setuptools
+	depends = python
+	depends = python-tree-sitter
+	source = python-tree-sitter-powershell-0.26.5.tar.gz::https://github.com/airbus-cert/tree-sitter-powershell/archive/refs/tags/v0.26.5.tar.gz
+	sha256sums = a949ac2bccd74b94b6199702c8b119cb353785e8a8828150a763b202ae8d4534
+
+pkgname = python-tree-sitter-powershell
