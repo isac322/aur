@@ -22,8 +22,8 @@ description: >-
 승인 게이트는 다음과 같다.
 
 1. 최신판 확인, 영향·의존성 감사나 업데이트 후보만 요청받으면 전수 감사와 변경 전 보고만 하고 파일, Git과 원격을 바꾸지 않는다.
-2. 특정 패키지나 fleet의 수정·버전업을 지시받으면 그 범위의 PKGBUILD 수정까지 승인된 것으로 본다.
-3. commit과 push는 같은 요청 또는 현재 대화·프로젝트의 명시적 standing authorization이 포함할 때만 수행한다.
+2. 특정 패키지나 fleet의 수정·버전업을 지시받으면 그 범위의 PKGBUILD 수정, 검증, 패키지별 원자적 commit, 모노레포 `origin` push와 각 AUR repository push까지 승인된 것으로 본다. commit/push를 다시 요청하거나 별도 확인을 기다리지 않는다.
+3. 같은 요청에서 사용자가 commit이나 push를 명시적으로 금지하면 해당 범위만 배포하지 않고 `not_requested`로 보고한다.
 4. 일괄 지시는 지정 fleet의 실행 승인이지만 요청하지 않은 cleanup, clone, 저장소·remote·권한 변경은 제외하며, 새 범위는 승인 범위만 끝내고 후보로 보고한다.
 
 PKGBUILD 내용 규칙은 `references/arch-packaging-rules.md`가 규정한다. Step 3~5 전에 읽고 편집·검증에서 대조한다. 변수·함수 schema는 `PKGBUILD(5)`와 `makepkg --printsrcinfo`를 직접 쓴다.
@@ -141,19 +141,20 @@ Python은 archive 안 `site-packages`를 `PYTHONPATH`에 넣고 entry point를 �
 
 ## Step 6: Git 동기화와 배포
 
-commit/push 승인이 있는 package만 AUR 배포를 진행한다.
+수정·버전업 승인을 받아 검증이 완료된 package는 별도 commit/push 요청을 기다리지 않고 모두 배포한다. 사용자가 같은 요청에서 commit이나 push를 명시적으로 금지한 package만 제외한다.
 
 1. 모노레포 루트에서 패키지 파일만 독립 커밋한다: `git add <pkg>/PKGBUILD <pkg>/.SRCINFO && git commit -m "..."`
 2. commit 메시지에는 자동 attribution footer를 넣지 않는다. 여러 패키지를 한 커밋에 묶지 않는다.
-3. AUR 원격 최신 상태를 fetch한다: `git fetch "ssh://aur@aur.archlinux.org/<pkgbase>.git" master`
-4. 서브트리를 분리해 배포용 가상 커밋을 생성한다: `sha=$(git subtree split --prefix=<path>)`
-5. 사전 검증: `git ls-tree "$sha"`로 루트 위치 확인, `git merge-base --is-ancestor FETCH_HEAD "$sha"`로 fast-forward 계승을 확인한다.
-6. 검증된 커밋을 AUR 원격으로 직접 푸시한다: `git push "ssh://aur@aur.archlinux.org/<pkgbase>.git" "$sha:master"`
-7. package별 실패를 독립 처리해 한 실패 때문에 다른 검증 완료 package를 누락하지 않는다.
+3. 승인 범위의 package별 commit을 마치면 현재 모노레포 branch를 `origin`에 non-force push한다.
+4. 각 AUR 원격 최신 상태를 fetch한다: `git fetch "ssh://aur@aur.archlinux.org/<pkgbase>.git" master`
+5. 서브트리를 분리해 배포용 가상 커밋을 생성한다: `sha=$(git subtree split --prefix=<path>)`
+6. 사전 검증: `git ls-tree "$sha"`로 루트 위치 확인, `git merge-base --is-ancestor FETCH_HEAD "$sha"`로 fast-forward 계승을 확인한다.
+7. 검증된 커밋을 AUR 원격으로 직접 푸시한다: `git push "ssh://aur@aur.archlinux.org/<pkgbase>.git" "$sha:master"`
+8. package별 실패를 독립 처리해 한 실패 때문에 다른 검증 완료 package를 누락하지 않는다.
 
-## Step 7: AUR 반영 확인
+## Step 7: 원격 반영 확인
 
-배포마다 local HEAD, AUR master, 원격 `.SRCINFO`와 aurweb 표시를 대조한다. 모두 일치하면 RPC 이전 값은 cache delay로 구분하며 일부만 일치하면 성공으로 단정하지 않는다.
+배포마다 local HEAD, 모노레포 `origin` branch, AUR master, 원격 `.SRCINFO`와 aurweb 표시를 대조한다. 모두 일치하면 RPC 이전 값은 cache delay로 구분하며 일부만 일치하면 성공으로 단정하지 않는다.
 
 ## Step 8: 임시 데이터 및 빌드 잔여물 정리
 
