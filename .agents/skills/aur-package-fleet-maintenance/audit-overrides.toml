@@ -1,0 +1,69 @@
+# Only exceptions to source/url inference belong here. Discovery remains authoritative.
+
+[packages.linear-cli-finesssee]
+channel = "github"
+repo = "Finesssee/linear-cli"
+tag_prefix = "v"
+
+[packages.linear-cli-finesssee-bin]
+channel = "github"
+repo = "Finesssee/linear-cli"
+tag_prefix = "v"
+required_assets = ["linear-cli-x86_64-unknown-linux-gnu.tar.gz"]
+
+[packages.linear-cli-bin]
+channel = "github"
+repo = "Finesssee/linear-cli"
+tag_prefix = "v"
+required_assets = ["linear-cli-x86_64-unknown-linux-gnu.tar.gz"]
+
+[packages.posthog-cli]
+channel = "github"
+repo = "PostHog/posthog"
+tag_prefix = "posthog-cli/v"
+
+[packages.posthog-cli-bin]
+channel = "github"
+repo = "PostHog/posthog"
+tag_prefix = "posthog-cli/v"
+required_assets = [
+  "posthog-cli-x86_64-unknown-linux-gnu.tar.gz",
+  "posthog-cli-aarch64-unknown-linux-gnu.tar.gz",
+]
+
+[packages.bun-bin]
+channel = "github"
+repo = "oven-sh/bun"
+tag_prefix = "bun-v"
+required_assets = [
+  "bun-linux-x64.zip",
+  "bun-linux-x64-baseline.zip",
+  "bun-linux-aarch64.zip",
+]
+
+[packages.meridian]
+channel = "github"
+repo = "rynfar/meridian"
+tag_prefix = "meridian-v"
+
+[packages.kwin-scripts-dynamic-workspaces]
+channel = "pinned-github-head"
+repo = "maurges/dynamic_workspaces"
+pinned_var = "_commit"
+
+[packages.ttf-segoe-ui]
+channel = "static-checksum"
+source_url = "https://aka.ms/segoeuifont"
+
+[packages.openvpn3]
+channel = "codeberg"
+repo = "OpenVPN/openvpn3-linux"
+tag_prefix = "v"
+
+[packages.gdbuspp]
+channel = "codeberg"
+repo = "OpenVPN/gdbuspp"
+tag_prefix = "v"
+
+[packages.promtool]
+selection = "version"

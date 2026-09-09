@@ -7,7 +7,7 @@ description: >-
 
 # AUR package fleet maintenance
 
-이 스킬은 현재 워크스페이스의 canonical 실행 절차다. 과거 실행 목록을 재사용하지 않고 매 실행의 로컬 상태, 공식 upstream, AUR 권한과 원격을 다시 조사한다.
+이 스킬은 현재 워크스페이스의 canonical 실행 절차다. 과거 실행 결과와 upstream 응답 cache는 재사용하지 않지만, inventory 수집과 버전 판정 코드는 이 스킬의 `check.py`를 매 실행 재사용한다.
 
 ## 권위, 승인과 package notes
 
@@ -29,6 +29,19 @@ description: >-
 PKGBUILD 내용 규칙은 `references/arch-packaging-rules.md`가 규정한다. Step 3~5 전에 읽고 편집·검증에서 대조한다. 변수·함수 schema는 `PKGBUILD(5)`와 `makepkg --printsrcinfo`를 직접 쓴다.
 대상이 `references/package-notes.md`에 있으면 감사 전에 읽는다. notes는 package별 비직관 계약의 출발점일 뿐 일반 규칙을 옮기지 않는다. 버전·checksum·asset·Git·remote·권한은 현재 PKGBUILD와 upstream에서 재검증한다.
 
+## 재사용 감사 도구
+
+inventory 수집과 upstream 최신판 확인은 반드시 `.agents/skills/aur-package-fleet-maintenance/check.py`로 시작한다. 같은 기능의 임시 Python·Shell script를 실행마다 다시 작성하지 않는다.
+
+- 전체 수집: `python3 .agents/skills/aur-package-fleet-maintenance/check.py inventory --json`
+- 전체 최신판 감사: `python3 .agents/skills/aur-package-fleet-maintenance/check.py audit --json`
+- 편집·commit/push 직전 재확인: `python3 .agents/skills/aur-package-fleet-maintenance/check.py audit --json --only <pkgbase>`
+- 표준 package는 PKGBUILD의 source와 url에서 channel을 자동 추론하고, generic 판정이 틀리는 예외만 `audit-overrides.toml`에 선언한다.
+- 도구는 non-vendored PKGBUILD를 실행 시점에 동적으로 전수 발견한다. 새 package는 자동 포함하고 삭제된 package는 자동 제외하며 고정 package roster나 과거 inventory를 유지하지 않는다.
+- 새 package의 channel을 추론하지 못하면 `UNMAPPED`를 숨기지 않고 완료를 막는다. 해당 package만 임시로 우회하지 말고 generic detector나 최소 override를 보완한다.
+- checker가 현재 package를 잘못 판정하거나 지원 채널이 부족하면 일회성 대체 script로 우회하지 않고 checker와 필요한 fixture를 고친다.
+- 재사용 대상은 코드와 예외 규칙뿐이다. 네트워크 응답, latest version, release/tag/VCS HEAD와 checksum 결과는 저장하지 않고 매 실행 공식 upstream에서 새로 조회한다.
+
 ## Inventory와 run tally
 
 실행 중 tally는 `SSH permission bases ∪ local PKGBUILD bases`의 package base마다 한 행을 둔다. 별도 ledger, summary, proof 등 증적·원장·요약 파일은 만들지 않는다.
@@ -48,15 +61,15 @@ impact(`dependency/packaging`), outcome(`validation/disposition/commit_sha/push_
 `repository_state=no_git`은 조사 시 Git metadata가 없다는 뜻이고, `push_status=no_repository`는 승인된 로컬 변경·검증 후 commit/push할 저장소가 없다는 최종 처분이다.
 `validation`은 검증 강도·결과이고 `disposition`은 outdated 처리 결과이므로 `full|partial`을 disposition 합계에 더하지 않는다.
 
-기본은 단일 커널의 bounded 병렬 조회다. batch별 base를 유일하게 배정해 tally에 직접 넣고 입력·출력 pkgbase set equality와 중복 없음을 검산한다.
+기본은 `check.py`가 수행하는 단일 프로세스의 bounded 병렬 조회다. batch별 base를 유일하게 배정해 tally에 직접 넣고 입력·출력 pkgbase set equality와 중복 없음을 검산한다.
 조회 실패나 최신판 판별 불가는 현재 `pkgver`를 `latest_version`으로 상속하지 않고 값을 비운 채 `uncertain`과 사유를 기록한다.
 검산이 틀린 batch만 재조회한다. 그 사이 나온 release, tag나 VCS HEAD는 새 finding으로 영향 감사부터 처리하며 이미 push한 값을 자동 복원하지 않는다.
 
 ## Step 1: 전체 대상 식별
 
 1. `ssh aur@aur.archlinux.org list-repos` 결과를 push 권한 집합으로 쓴다. 조회 불가 시 권한은 `uncertain`이며 aurweb maintainer 검색만으로 확정하지 않는다.
-2. `find . -maxdepth 3 -type f -name PKGBUILD -not -path '*/src/*'`로 로컬 대상을 수집한다.
-3. `openvpn3/openvpn3/PKGBUILD`와 `openvpn3/openvpn3-git/PKGBUILD`가 포함됐는지 canary로 확인한다. `-maxdepth 2`나 `*/PKGBUILD` glob은 쓰지 않는다.
+2. `check.py inventory --json` 결과를 로컬 대상 집합으로 쓴다. checker는 깊이를 고정하지 않고 non-vendored `PKGBUILD`를 재귀적으로 발견하므로 package 추가·삭제나 중첩 경로 변경을 정적 roster 없이 반영한다.
+3. 결과에 `openvpn3/openvpn3/PKGBUILD`와 `openvpn3/openvpn3-git/PKGBUILD`가 포함됐는지 canary로 확인한다. 빠졌으면 별도 `find` 결과로 우회하지 않고 checker의 discovery 제외 규칙을 고친다.
 4. package base와 repository 경로로 식별하고 split package, `.SRCINFO`, Git 상태와 remote URL을 조사한다. `pkgname`만 대조 기준으로 쓰지 않는다.
 5. 이름과 무관하게 URL이 `aur.archlinux.org/<pkgbase>.git`인 remote를 AUR remote로 식별해 fetch와 push에 재사용한다.
 6. AUR master를 fetch한다. clean하고 HEAD가 원격의 단순 ancestor일 때만 branch 이름과 무관하게 fast-forward하며, 그 밖에는 자동 정리 없이 상태를 보존한다.
@@ -71,9 +84,9 @@ impact(`dependency/packaging`), outcome(`validation/disposition/commit_sha/push_
 같은 upstream의 source, `-bin`, `-git`은 조회를 공유하되 각 PKGBUILD의 source, architecture, build와 runtime 계약은 따로 판정한다.
 VCS package는 target branch/ref, 원격 HEAD와 실제 `pkgver()`를 비교한다. 근거와 `current|outdated|uncertain|untrackable`을 tally에 남긴다.
 
-1. AUR sync 후 다시 읽은 PKGBUILD를 기준으로 공식 최신판을 최초 판정한다.
-2. 실제 편집 직전에 같은 공식 채널을 재조회한다. 새 release/ref면 기존 계획과 checksum을 폐기하고 영향 감사부터 반복한다.
-3. commit/push 직전에 마지막으로 재조회한다. 새 release/ref면 오래된 변경을 push하지 않고 영향 감사부터 반복한다.
+1. AUR sync 후 `check.py audit --json` 결과를 기준으로 공식 최신판을 최초 판정한다.
+2. 실제 편집 직전에 `check.py audit --json --only <pkgbase>`로 같은 공식 채널을 재조회한다. 새 release/ref면 기존 계획과 checksum을 폐기하고 영향 감사부터 반복한다.
+3. commit/push 직전에 같은 `--only <pkgbase>` 감사를 마지막으로 실행한다. 새 release/ref면 오래된 변경을 push하지 않고 영향 감사부터 반복한다.
 
 checksum 성공만으로 payload 버전을 증명하지 않는다. archive root, package metadata, source manifest나 binary `--version`으로 최종 `pkgver`와 일치함을 확인한다.
 감사 전용 요청이면 Step 3까지 수행하고 `AGENTS.md`의 그룹별 변경 전 보고 형식으로 보고한 뒤 멈춘다.
