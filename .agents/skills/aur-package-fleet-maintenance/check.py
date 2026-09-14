@@ -682,7 +682,7 @@ def missing_assets(required: Sequence[str], available: Sequence[str]) -> list[st
 def audit_forge(recipe: Recipe, target: Target, http: HttpClient) -> Result:
     if not target.repo:
         raise AuditError(f"{target.channel} repository could not be inferred")
-    if target.selection not in {"published", "version"}:
+    if target.selection not in {"published", "version", "tag"}:
         raise AuditError(f"unsupported release selection: {target.selection}")
 
     prefix = target.tag_prefix
@@ -719,7 +719,12 @@ def audit_forge(recipe: Recipe, target: Target, http: HttpClient) -> Result:
         key=lambda candidate: natural_key(release_version(candidate)),
         reverse=True,
     )
-    ordered_releases = version_releases if target.selection == "version" else published_releases
+    if target.selection == "tag":
+        ordered_releases = []
+    elif target.selection == "version":
+        ordered_releases = version_releases
+    else:
+        ordered_releases = published_releases
 
     release: Mapping[str, Any] | None = None
     required: list[str] = []

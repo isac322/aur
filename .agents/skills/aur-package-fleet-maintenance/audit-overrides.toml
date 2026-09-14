@@ -65,5 +65,8 @@ channel = "codeberg"
 repo = "OpenVPN/gdbuspp"
 tag_prefix = "v"
 
+[packages.stably-orca]
+selection = "tag"
+
 [packages.promtool]
 selection = "version"
