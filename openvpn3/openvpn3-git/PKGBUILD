@@ -3,7 +3,7 @@
 
 _pkgname=openvpn3-linux
 pkgname=openvpn3-git
-pkgver=27.r20.gbc9af8e
+pkgver=27.r74.gcb689dd
 pkgrel=1
 pkgdesc='OpenVPN 3 Linux client'
 arch=('x86_64' 'aarch64')
@@ -14,7 +14,8 @@ license=('AGPL-3.0-only')
 depends=(
   'jsoncpp>=0.10.5' 'libcap-ng>=0.7.5' 'lz4>=1.8.4' 'util-linux-libs>=2.23.2' 'openssl>=1.0.2'
   'protobuf' 'python-dbus' 'python-gobject' 'python-systemd' 'tinyxml2>=2.1.0' 'libnl>=3.2.29'
-  'gdbuspp'
+  # gdbuspp-git master requires fmt but does not declare it yet.
+  'fmt' 'gdbuspp-git'
 )
 optdepends=(
   'polkit>=0.105: for systemd-resolved integration'
@@ -47,6 +48,8 @@ pkgver() {
 prepare() {
   meson subprojects download --sourcedir="${_pkgname}"
   cd "${_pkgname}"
+  # gdbuspp master reports master_<commit> via pkg-config until v4 is tagged.
+  sed -i "s/dependency('gdbuspp', version: '>= 4')/dependency('gdbuspp')/" meson.build
   git submodule init
   git config submodule.openvpn3-core.url "$srcdir/openvpn3"
   git config submodule.vendor/asio.url "$srcdir/asio"

@@ -1,6 +1,6 @@
 pkgbase = openvpn3-git
 	pkgdesc = OpenVPN 3 Linux client
-	pkgver = 27.r20.gbc9af8e
+	pkgver = 27.r74.gcb689dd
 	pkgrel = 1
 	url = https://codeberg.org/OpenVPN/openvpn3-linux
 	install = openvpn3-git.install
@@ -22,10 +22,11 @@ pkgbase = openvpn3-git
 	depends = python-systemd
 	depends = tinyxml2>=2.1.0
 	depends = libnl>=3.2.29
-	depends = gdbuspp
+	depends = fmt
+	depends = gdbuspp-git
 	optdepends = polkit>=0.105: for systemd-resolved integration
 	optdepends = repkg: Automatically rebuild the package on dependency updates
-	provides = openvpn3=27.r20.gbc9af8e
+	provides = openvpn3=27.r74.gcb689dd
 	conflicts = openvpn3
 	source = git+https://codeberg.org/OpenVPN/openvpn3-linux.git
 	source = git+https://github.com/OpenVPN/openvpn3.git
