@@ -8,7 +8,7 @@
 #       adds a canonical LICENSE file.
 
 pkgname=meridian
-pkgver=1.77.0
+pkgver=1.77.1
 pkgrel=1
 pkgdesc='Local Anthropic API powered by your Claude Max or Antigravity subscription'
 arch=('x86_64' 'aarch64')
@@ -28,7 +28,7 @@ source=(
   "${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/${_tag}.tar.gz"
   "${pkgname}.service"
 )
-sha256sums=('a995c34f05b6d237302cc9f39f503dfc8d98b6fe87432467d8312fde591df40c'
+sha256sums=('eb526b23cb176b046b76534d741c0555900364b23646e24363d96e6c2a2e1ff4'
             '214cb5117909c4c67be2e6f2a8031856a7bb05814093d0d39486027e11873b75')
 
 prepare() {
