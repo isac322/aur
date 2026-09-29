@@ -9,7 +9,8 @@
 
 pkgname=meridian
 pkgver=1.78.0
-pkgrel=1
+pkgrel=2
+_commit=446a0f1633be3a0cf36d8f1e9f222e914d2f7c83
 pkgdesc='Local Anthropic API powered by your Claude Max or Antigravity subscription'
 arch=('x86_64' 'aarch64')
 url='https://github.com/rynfar/meridian'
@@ -21,25 +22,15 @@ conflicts=('claude-max-proxy')
 options=('!strip' '!debug')
 install="${pkgname}.install"
 
-_tag="meridian-v${pkgver}"
-_archive_subdir="${pkgname}-${_tag}"
-
 source=(
-  "${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/${_tag}.tar.gz"
+  "${pkgname}-${pkgver}-${_commit}.tar.gz::${url}/archive/${_commit}.tar.gz"
   "${pkgname}.service"
 )
-sha256sums=('b879d3e589025d428d5d0b16a4df8c0ea9f4368ba69b39fa24bb6317b6ef652a'
+sha256sums=('4d30ee2d4343db58a975968217972325178d964ddb44346b841f829d26e06030'
             '214cb5117909c4c67be2e6f2a8031856a7bb05814093d0d39486027e11873b75')
 
-prepare() {
-  cd "${srcdir}"
-  if [[ -d "${_archive_subdir}" && ! -d "${pkgname}-${pkgver}" ]]; then
-    mv "${_archive_subdir}" "${pkgname}-${pkgver}"
-  fi
-}
-
 build() {
-  cd "${srcdir}/${pkgname}-${pkgver}"
+  cd "${srcdir}/${pkgname}-${_commit}"
   export BUN_INSTALL_CACHE_DIR="${srcdir}/.bun-cache"
   bun install --frozen-lockfile --linker=hoisted
   bun run build
@@ -48,7 +39,7 @@ build() {
   # Relocate that path and its dynamic native-module require to the installed
   # node_modules tree. Match the generated code instead of a hashed chunk name,
   # and fail if upstream or Bun changes the expected bundle shape.
-  local _libsql_build_dir="${srcdir}/${pkgname}-${pkgver}/node_modules/libsql"
+  local _libsql_build_dir="${srcdir}/${pkgname}-${_commit}/node_modules/libsql"
   local _libsql_runtime_dir="/usr/lib/${pkgname}/node_modules/libsql"
   local _libsql_dir_decl="var __dirname = \"${_libsql_build_dir}\";"
   local _libsql_runtime_decl="var __dirname = \"${_libsql_runtime_dir}\";"
@@ -89,7 +80,7 @@ build() {
 }
 
 package() {
-  cd "${srcdir}/${pkgname}-${pkgver}"
+  cd "${srcdir}/${pkgname}-${_commit}"
 
   install -d "${pkgdir}/usr/lib/${pkgname}"
   # Preserve hardlinks that bun's hoisted linker creates between identical
