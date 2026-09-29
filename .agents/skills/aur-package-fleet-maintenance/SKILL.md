@@ -41,7 +41,8 @@ inventory 수집과 upstream 최신판 확인은 반드시 `.agents/skills/aur-p
 - 새 package의 channel을 추론하지 못하면 `UNMAPPED`를 숨기지 않고 완료를 막는다. 해당 package만 임시로 우회하지 말고 generic detector나 최소 override를 보완한다.
 - checker가 현재 package를 잘못 판정하거나 지원 채널이 부족하면 일회성 대체 script로 우회하지 않고 checker와 필요한 fixture를 고친다.
 - 재사용 대상은 코드와 예외 규칙뿐이다. 네트워크 응답, latest version, release/tag/VCS HEAD와 checksum 결과는 저장하지 않고 매 실행 공식 upstream에서 새로 조회한다.
-- `audit-overrides.toml`에 `pinned_var`를 선언한 github/codeberg package는 source가 해당 변수의 commit으로 `/archive/<commit>`을 내려받고, 그 commit이 `pkgver` tag의 peeled commit과 일치해야 한다. tag archive로 되돌아가거나 pin이 없거나 source와 어긋나면 `uncertain`, 같은 버전 tag가 다른 commit으로 옮겨졌으면 `outdated`로 판정한다. 이 판정을 checksum 재계산으로 덮지 않는다.
+- 모든 package의 GitHub source archive(`github.com/<o>/<r>/archive/...`, `codeload.github.com/...`)는 channel·override와 무관하게 기본 판정한다. `refs/tags/` archive와 실제 tag로 해석되는 `/archive/<ref>`는 mutable source라 `uncertain`이다. `/archive/<ref>`는 `git ls-remote`로 tag·branch를 해석하며, branch로 확인된 경우만 pin 대상에서 제외하고 어느 쪽도 아니면 `uncertain`이다.
+- 허용되는 형태는 40자 commit archive뿐이다. local 파일명에 commit이 들어가야 하고(cache identity), `_commit`을 선언하면 full commit이어야 하며 source에서 실제로 쓰여야 한다. 추적 GitHub repo의 commit은 `tag_prefix+pkgver`(또는 `pkgver`, `v+pkgver`) tag의 peeled commit과 일치해야 하며, tag가 없으면 `uncertain`, 같은 버전 tag가 옮겨졌으면 `outdated`다. 다른 repo의 commit archive는 standalone pin으로 허용하고, 버전 tag와 대조해야 하면 `audit-overrides.toml`에 `source_tags = { "<o>/<r>" = "<tag template, {version}>" }`를 선언한다. 이 판정을 checksum 재계산으로 덮지 않는다. `pinned_var`는 default-branch HEAD를 추적하는 `pinned-github-head` channel에만 쓴다.
 - checker를 고치면 `python3 -B -m unittest discover -s tests -v`로 pin 판정 fixture를 함께 실행한다.
 
 ## Inventory와 run tally
@@ -114,7 +115,7 @@ dependency를 추가할 때 upstream 배포명만으로 Arch 이름을 추측하
 실행 승인된 outdated만 수정한다. `pkgver` 변경 시 `pkgrel=1`, 같은 버전의 수정은 `pkgrel`만 올리며, immutable source의 URL·파일명을 먼저 바꾼 뒤 checksum을 계산한다.
 architecture별 source는 모든 선언 arch의 asset 존재, SHA-256과 payload architecture를 직접 검증하고 upstream manifest와 대조한다.
 이 규칙은 `updpkgsums`만으로 대체할 수 없다. 공통 source도 새 ref에서 다시 해시하며 byte-identical이면 근거를 tally에 남기고 값을 유지한다.
-`pinned_var` package의 버전업은 새 tag의 peeled commit(`git ls-remote <repo> 'refs/tags/<tag>^{}'`, lightweight tag는 ref 자체)으로 pin 변수를 먼저 바꾸고 commit archive를 해시한다. tag archive URL로 되돌리지 않는다.
+GitHub source archive는 새 package든 버전업이든 tag URL을 쓰지 않는다. 새 tag의 peeled commit(`git ls-remote <repo> 'refs/tags/<tag>' 'refs/tags/<tag>^{}'`; annotated는 `^{}` 줄, lightweight는 ref 자체)을 `_commit=<full commit>`으로 먼저 바꾸고 `"<name>-${pkgver}-${_commit}.tar.gz::https://github.com/<o>/<r>/archive/${_commit}.tar.gz"`를 해시한다. archive root는 `<r>-${_commit}`이므로 `cd`·`_srcdir` 경로를 함께 맞추고, archive 안 version metadata가 `pkgver`와 일치하는지 확인한다.
 같은 버전에서 checksum만 틀리면 upstream 재태깅으로 보고 checksum만 덮어쓰지 않는다. 옮겨진 tag의 commit과 release를 다시 검증한 뒤 pin·checksum·`pkgrel`을 함께 바꾸는 별도 변경으로 다룬다.
 확인된 dependency만 반영하고 근거가 사라진 patch, workaround, stale 변수·파일을 제거한다.
 build, package, check, completion, service/install을 새 계약에 맞추고 기존 스타일과 Arch 규칙을 지킨 뒤 최종 PKGBUILD에서 `.SRCINFO`를 다시 생성한다.

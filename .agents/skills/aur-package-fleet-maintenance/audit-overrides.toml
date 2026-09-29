@@ -2,18 +2,18 @@
 
 [packages.linear-cli-finesssee]
 channel = "github"
-repo = "Finesssee/linear-cli"
+repo = "nesszer/linear-cli"
 tag_prefix = "v"
 
 [packages.linear-cli-finesssee-bin]
 channel = "github"
-repo = "Finesssee/linear-cli"
+repo = "nesszer/linear-cli"
 tag_prefix = "v"
 required_assets = ["linear-cli-x86_64-unknown-linux-gnu.tar.gz"]
 
 [packages.linear-cli-bin]
 channel = "github"
-repo = "Finesssee/linear-cli"
+repo = "nesszer/linear-cli"
 tag_prefix = "v"
 required_assets = ["linear-cli-x86_64-unknown-linux-gnu.tar.gz"]
 
@@ -49,7 +49,6 @@ tag_prefix = "meridian-v"
 [packages.kwin-scripts-dynamic-workspaces]
 channel = "pinned-github-head"
 repo = "maurges/dynamic_workspaces"
-pinned_var = "_commit"
 
 [packages.ttf-segoe-ui]
 channel = "static-checksum"
@@ -68,7 +67,6 @@ tag_prefix = "v"
 [packages.stably-orca]
 selection = "tag"
 tag_prefix = "v"
-pinned_var = "_commit"
 
 [packages.promtool]
 selection = "version"

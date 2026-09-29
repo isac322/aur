@@ -105,13 +105,15 @@ class Target:
     name: str = ""
     repo: str = ""
     tag_prefix: str = ""
+    tag_prefix_explicit: bool = False
     selection: str = "published"
     selection_explicit: bool = False
     required_assets: list[str] = dataclasses.field(default_factory=list)
     required_assets_explicit: bool = False
     index_url: str = ""
     file_regex: str = ""
-    pinned_var: str = ""
+    pinned_var: str = ""  # pinned-github-head only: variable holding the HEAD commit
+    source_tags: dict[str, str] = dataclasses.field(default_factory=dict)
     source_url: str = ""
     hold_reason: str = ""
     notes: list[str] = dataclasses.field(default_factory=list)
@@ -502,6 +504,25 @@ def infer_tag_prefix(recipe: Recipe, repo: str) -> str:
     return ""
 
 
+def pinned_tag_prefix(recipe: Recipe, target: Target) -> str:
+    """Tag prefix of a tracked repo whose only version reference is a commit pin.
+
+    A commit archive URL carries no tag name, so the prefix is recovered from
+    the `pkgver` tag family (`v<pkgver>` or `<pkgver>`) that exists upstream.
+    When both families exist the prefix stays unknown instead of choosing the
+    alias that happens to match the pin.
+    """
+    for archive in github_archive_sources(recipe):
+        if archive.kind != "commit" or archive.repo.lower() != target.repo.lower():
+            continue
+        candidates = [f"v{recipe.pkgver}", recipe.pkgver]
+        tags, _ = ls_remote(archive.repo, candidates)
+        existing = [tag for tag in candidates if tag in tags]
+        if len(existing) == 1:
+            return existing[0][: -len(recipe.pkgver)]
+    return ""
+
+
 def infer_required_assets(recipe: Recipe, repo: str) -> list[str]:
     assets: list[str] = []
     for key, value in recipe.sources():
@@ -517,133 +538,202 @@ def infer_required_assets(recipe: Recipe, repo: str) -> list[str]:
     return unique(assets)
 
 
-def pinned_archive_ref(recipe: Recipe, target: Target) -> str:
-    """Literal Git commit used as the /archive/<ref> source download, or ''."""
-    matchers = {"github": github_repo, "codeberg": codeberg_repo}
-    repo_match = matchers.get(target.channel)
-    if repo_match is None or not target.repo:
-        return ""
-    for _, value in recipe.sources():
-        remote = unquote(source_url(value))
-        if repo_match(remote) != target.repo:
-            continue
-        parts = [part for part in urlparse(remote).path.split("/") if part]
-        if len(parts) != 4 or parts[2] != "archive":
-            continue
-        match = re.fullmatch(r"([0-9a-fA-F]{7,40})(?:\.tar\.(?:gz|xz|bz2|zst)|\.zip)", parts[3])
-        if match:
-            return match.group(1)
-    return ""
+GITHUB_HOSTS = {"github.com", "www.github.com"}
+CODELOAD_FORMATS = {"tar.gz", "zip", "legacy.tar.gz", "legacy.zip", "tar", "legacy.tar"}
+ARCHIVE_SUFFIX = re.compile(r"\.(?:tar\.gz|tgz|tar\.bz2|tar\.xz|tar\.zst|tar|zip)$")
+FULL_COMMIT = re.compile(r"(?i)[0-9a-f]{40}")
 
 
-def ls_remote_tag_commits(output: str) -> dict[str, str]:
-    """Tag name → target commit from `git ls-remote` output.
+@dataclasses.dataclass(frozen=True)
+class ArchiveSource:
+    """A GitHub source-archive download and the Git ref it names."""
+
+    filename: str
+    url: str
+    repo: str
+    kind: str  # commit | tag | branch | ref (ambiguous /archive/<ref>)
+    refs: tuple[str, ...]  # candidate ref names, longest first
+
+    def label(self) -> str:
+        return f"{self.repo}@{self.refs[0]}"
+
+
+def github_archive_source(value: str) -> ArchiveSource | None:
+    """Parse a github.com /archive/ or codeload.github.com source entry."""
+    url = source_url(value)
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    parts = [unquote(part) for part in parsed.path.split("/") if part]
+    if host in GITHUB_HOSTS and len(parts) >= 4 and parts[2] == "archive":
+        ref_path = ARCHIVE_SUFFIX.sub("", "/".join(parts[3:]))
+    elif host == "codeload.github.com" and len(parts) >= 4 and parts[2] in CODELOAD_FORMATS:
+        ref_path = "/".join(parts[3:])
+    else:
+        return None
+    repo = f"{parts[0]}/{parts[1][:-4] if parts[1].endswith('.git') else parts[1]}"
+    filename = value.split("::", 1)[0] if "::" in value else Path(parsed.path).name
+    kind = "ref"
+    for prefix, prefixed_kind in (("refs/tags/", "tag"), ("refs/heads/", "branch")):
+        if ref_path.startswith(prefix):
+            kind, ref_path = prefixed_kind, ref_path[len(prefix) :]
+            break
+    segments = [segment for segment in ref_path.split("/") if segment]
+    if not segments:
+        return None
+    # /archive/<commit>.tar.gz or /archive/<commit>/<name>.tar.gz
+    if kind == "ref" and FULL_COMMIT.fullmatch(segments[0]):
+        return ArchiveSource(filename, url, repo, "commit", (segments[0].lower(),))
+    # A ref may contain slashes and GitHub also accepts a trailing file name
+    # (archive/<ref>/<name>.tar.gz), so every leading path is a candidate ref.
+    refs = tuple("/".join(segments[:end]) for end in range(len(segments), 0, -1))
+    return ArchiveSource(filename, url, repo, kind, refs)
+
+
+def github_archive_sources(recipe: Recipe) -> list[ArchiveSource]:
+    return [
+        archive
+        for _, value in recipe.sources()
+        if (archive := github_archive_source(value)) is not None
+    ]
+
+
+def parse_ls_remote(output: str) -> tuple[dict[str, str], dict[str, str]]:
+    """(tag → commit, branch → commit) from `git ls-remote` output.
 
     For annotated tags the peeled `refs/tags/<name>^{}` entry names the tagged
     commit; lightweight tags resolve to their ref object directly.
     """
-    commits: dict[str, str] = {}
+    tags: dict[str, str] = {}
+    heads: dict[str, str] = {}
+    rows = []
     for line in output.splitlines():
         columns = line.split()
-        if len(columns) != 2 or not re.fullmatch(r"(?i)[0-9a-f]{40}", columns[0]):
-            continue
-        sha, ref = columns[0].lower(), columns[1]
+        if len(columns) == 2 and FULL_COMMIT.fullmatch(columns[0]):
+            rows.append((columns[0].lower(), columns[1]))
+    for sha, ref in rows:
         if ref.startswith("refs/tags/") and ref.endswith("^{}"):
-            commits[ref[len("refs/tags/") : -len("^{}")]] = sha
-    for line in output.splitlines():
-        columns = line.split()
-        if len(columns) != 2 or not re.fullmatch(r"(?i)[0-9a-f]{40}", columns[0]):
-            continue
-        sha, ref = columns[0].lower(), columns[1]
+            tags[ref[len("refs/tags/") : -len("^{}")]] = sha
+    for sha, ref in rows:
         if ref.startswith("refs/tags/") and not ref.endswith("^{}"):
-            commits.setdefault(ref[len("refs/tags/") :], sha)
-    return commits
+            tags.setdefault(ref[len("refs/tags/") :], sha)
+        elif ref.startswith("refs/heads/"):
+            heads[ref[len("refs/heads/") :]] = sha
+    return tags, heads
 
 
-def resolve_tag_commits(target: Target, tags: Sequence[str]) -> dict[str, str]:
-    remotes = {
-        "github": f"https://github.com/{target.repo}.git",
-        "codeberg": f"https://codeberg.org/{target.repo}.git",
-    }
-    remote = remotes.get(target.channel)
+def ls_remote(repo: str, refs: Sequence[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve tag and branch names of a GitHub repository without cloning."""
     git = shutil.which("git")
-    if remote is None or not git:
-        return {}
+    if not git:
+        raise AuditError("git is required to resolve GitHub archive refs")
+    remote = f"https://github.com/{repo}.git"
     patterns = [
         pattern
-        for tag in tags
-        for pattern in (f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}")
+        for ref in unique(refs)
+        for pattern in (f"refs/tags/{ref}", f"refs/tags/{ref}^{{}}", f"refs/heads/{ref}")
     ]
-    process = subprocess.run(
-        [git, "ls-remote", remote, *patterns],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    try:
+        process = subprocess.run(
+            [git, "ls-remote", remote, *patterns],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AuditError(f"git ls-remote timed out for {remote}") from exc
     if process.returncode:
         raise AuditError(
             f"git ls-remote failed for {remote}: "
             f"{process.stderr.strip() or 'exit ' + str(process.returncode)}"
         )
-    return ls_remote_tag_commits(process.stdout)
+    return parse_ls_remote(process.stdout)
 
 
-def verify_pinned_source(recipe: Recipe, target: Target) -> tuple[str, str]:
-    """Check a commit-pinned forge archive against the resolved version tag.
+def version_tags(recipe: Recipe, target: Target, archive: ArchiveSource) -> list[str]:
+    """Tags a commit archive must match for the current pkgver, or [] if unmapped.
 
-    Runs only when audit-overrides.toml declares `pinned_var`. Returns
-    (status, detail): "current" when the pin, the archive source URL, and the
-    tag's peeled commit all agree; "outdated" when the same-version tag moved;
-    "uncertain" when the pin contract itself is broken or cannot be resolved.
+    The tracked GitHub repository maps through its tag prefix; any other
+    repository needs an explicit `source_tags` template in audit-overrides.toml.
     """
-    if not target.pinned_var:
-        return "uncertain", "pinned_var is required but empty"
-    pin = shell_assignment(recipe.raw, target.pinned_var)
-    if not re.fullmatch(r"(?i)[0-9a-f]{7,40}", pin):
-        return (
-            "uncertain",
-            f"{target.pinned_var} is not a literal Git commit pin: {pin or '(unset)'}",
-        )
-    archive_ref = pinned_archive_ref(recipe, target)
-    if not archive_ref:
-        return (
-            "uncertain",
-            f"{target.pinned_var} is set but no source downloads "
-            f"{target.repo} /archive/<commit>",
-        )
-    if archive_ref.lower() != pin.lower():
-        return (
-            "uncertain",
-            f"archive source commit {archive_ref} differs from "
-            f"{target.pinned_var} {pin}",
-        )
-    candidates = unique(
-        [
-            f"{target.tag_prefix}{recipe.pkgver}",
-            recipe.pkgver,
-            f"v{recipe.pkgver}",
-        ]
-    )
-    resolved = resolve_tag_commits(target, candidates)
-    used_tag = next((tag for tag in candidates if tag in resolved), "")
-    if not used_tag:
-        return (
-            "uncertain",
-            f"no upstream tag for pkgver {recipe.pkgver} to verify "
-            f"{target.pinned_var} against",
-        )
-    commit = resolved[used_tag]
-    if commit.lower().startswith(pin.lower()):
-        return (
-            "current",
-            f"{target.pinned_var} {pin} matches tag {used_tag} commit {commit}",
-        )
-    return (
-        "outdated",
-        f"tag {used_tag} now targets commit {commit} but "
-        f"{target.pinned_var} pins {pin}; re-pin to the new tag target",
-    )
+    for repo, template in target.source_tags.items():
+        if repo.lower() == archive.repo.lower():
+            try:
+                return [template.format(version=recipe.pkgver)]
+            except (KeyError, IndexError, ValueError) as exc:
+                raise AuditError(f"invalid source_tags template {template!r}: {exc}") from exc
+    if target.channel == "github" and target.repo.lower() == archive.repo.lower():
+        return unique([f"{target.tag_prefix}{recipe.pkgver}", recipe.pkgver, f"v{recipe.pkgver}"])
+    return []
+
+
+def audit_archive_pins(recipe: Recipe, target: Target) -> tuple[str, str]:
+    """Enforce immutable GitHub source archives for every recipe.
+
+    Returns (status, detail) where status is "" (no finding), "outdated" (a
+    pinned version tag moved to another commit) or "uncertain" (mutable tag
+    archive, broken pin contract, or an unresolvable ref).
+    """
+    archives = github_archive_sources(recipe)
+    findings: list[tuple[str, str]] = []
+    notes: list[str] = []
+    pin = shell_assignment(recipe.raw, "_commit")
+    if pin:
+        if not FULL_COMMIT.fullmatch(pin):
+            findings.append(("uncertain", f"_commit {pin} is not a full 40-hex Git commit"))
+        elif not any(pin.lower() in source_url(value).lower() for _, value in recipe.sources()):
+            findings.append(("uncertain", f"_commit {pin} is not used by any source"))
+
+    for archive in archives:
+        if archive.kind == "commit":
+            commit = archive.refs[0]
+            if commit not in archive.filename.lower():
+                findings.append(
+                    ("uncertain", f"commit archive {archive.label()} is cached as {archive.filename}; the local file name must contain the commit")
+                )
+            tags = version_tags(recipe, target, archive)
+            if not tags:
+                notes.append(f"standalone commit archive {archive.label()}")
+                continue
+            resolved, _ = ls_remote(archive.repo, tags)
+            used = next((tag for tag in tags if tag in resolved), "")
+            if not used:
+                findings.append(
+                    ("uncertain", f"no {archive.repo} tag {' / '.join(tags)} to verify commit {commit} against")
+                )
+            elif resolved[used] != commit:
+                findings.append(
+                    ("outdated", f"tag {archive.repo}@{used} now targets {resolved[used]} but the source pins {commit}; re-pin to the new tag target")
+                )
+            else:
+                notes.append(f"{archive.label()} matches tag {used}")
+            continue
+        if archive.kind == "tag":
+            findings.append(
+                ("uncertain", f"mutable tag archive {archive.label()}; download /archive/<peeled commit> instead")
+            )
+            continue
+        if archive.kind == "branch":
+            notes.append(f"branch archive {archive.label()} is not version-pinned")
+            continue
+        tags, heads = ls_remote(archive.repo, archive.refs)
+        tag = next((ref for ref in archive.refs if ref in tags), "")
+        head = next((ref for ref in archive.refs if ref in heads), "")
+        if tag:
+            findings.append(
+                ("uncertain", f"mutable tag archive {archive.repo}@{tag}; download /archive/<peeled commit> instead")
+            )
+        elif head:
+            notes.append(f"branch archive {archive.repo}@{head} is not version-pinned")
+        else:
+            findings.append(("uncertain", f"archive ref {archive.label()} is neither a tag, a branch nor a full commit"))
+
+    statuses = {status for status, _ in findings}
+    status = "uncertain" if "uncertain" in statuses else "outdated" if statuses else ""
+    return status, "; ".join([detail for _, detail in findings] + notes)
+
 
 def load_overrides(path: Path) -> dict[str, dict[str, Any]]:
     if not path.exists():
@@ -657,6 +747,8 @@ def load_overrides(path: Path) -> dict[str, dict[str, Any]]:
     for pkgbase, value in packages.items():
         if not isinstance(value, dict):
             raise AuditError(f"audit-overrides.toml: packages.{pkgbase} must be a table")
+        if not isinstance(value.get("source_tags", {}), dict):
+            raise AuditError(f"audit-overrides.toml: packages.{pkgbase}.source_tags must be a table of repo = tag template")
         result[str(pkgbase)] = dict(value)
     return result
 
@@ -674,11 +766,13 @@ def classify(recipe: Recipe, override: Mapping[str, Any]) -> Target:
     target.selection = str(override.get("selection", "published"))
     target.selection_explicit = "selection" in override
     target.tag_prefix = str(override.get("tag_prefix", ""))
+    target.tag_prefix_explicit = "tag_prefix" in override
     target.required_assets = [str(item) for item in override.get("required_assets", [])]
     target.required_assets_explicit = "required_assets" in override
     target.index_url = str(override.get("index_url", ""))
     target.file_regex = str(override.get("file_regex", ""))
     target.pinned_var = str(override.get("pinned_var", ""))
+    target.source_tags = {str(repo): str(template) for repo, template in override.get("source_tags", {}).items()}
     target.source_url = str(override.get("source_url", ""))
 
     moving = moving_vcs_source(recipe)
@@ -727,7 +821,8 @@ def classify(recipe: Recipe, override: Mapping[str, Any]) -> Target:
         target.source_url = primary
 
     if target.channel in {"github", "codeberg"}:
-        target.tag_prefix = target.tag_prefix or infer_tag_prefix(recipe, target.repo)
+        if not target.tag_prefix_explicit:
+            target.tag_prefix = target.tag_prefix or infer_tag_prefix(recipe, target.repo)
     if target.channel == "github" and not target.required_assets:
         target.required_assets = infer_required_assets(recipe, target.repo)
     if target.channel == "static-checksum":
@@ -813,6 +908,8 @@ def audit_forge(recipe: Recipe, target: Target, http: HttpClient) -> Result:
     if target.selection not in {"published", "version", "tag"}:
         raise AuditError(f"unsupported release selection: {target.selection}")
 
+    if target.channel == "github" and not target.tag_prefix and not target.tag_prefix_explicit:
+        target.tag_prefix = pinned_tag_prefix(recipe, target)
     prefix = target.tag_prefix
     if target.channel == "github":
         base = f"https://api.github.com/repos/{target.repo}"
@@ -940,14 +1037,6 @@ def audit_forge(recipe: Recipe, target: Target, http: HttpClient) -> Result:
             f"highest released version {release_version(version_releases[0])}; "
             "declare selection in audit-overrides.toml"
         )
-
-    if target.pinned_var:
-        pin_status, pin_detail = verify_pinned_source(recipe, target)
-        # A broken pin contract stays uncertain even when a newer version is
-        # also available; a moved same-version tag always surfaces as outdated.
-        if pin_status in {"uncertain", "outdated"}:
-            status = pin_status
-        detail = "; ".join(part for part in (detail, pin_detail) if part)
 
     return Result(
         pkgbase=recipe.pkgbase,
@@ -1177,6 +1266,23 @@ def uncertain_result(recipe: Recipe, target: Target, message: str) -> Result:
 
 
 def audit_one(recipe: Recipe, target: Target, http: HttpClient) -> Result:
+    result = audit_channel(recipe, target, http)
+    try:
+        pin_status, pin_detail = audit_archive_pins(recipe, target)
+    except (AuditError, OSError, subprocess.SubprocessError) as exc:
+        pin_status, pin_detail = "uncertain", f"GitHub archive pin check failed: {exc}"
+    # Pin findings apply to every channel. A broken or mutable pin stays
+    # uncertain even when a newer version is available; a moved same-version
+    # tag surfaces as outdated unless the channel result is already a
+    # stronger finding. unmapped/untrackable keep their own status.
+    if result.status not in {"unmapped", "untrackable"}:
+        if pin_status == "uncertain" or (pin_status == "outdated" and result.status != "uncertain"):
+            result.status = pin_status
+    result.detail = "; ".join(part for part in (result.detail, pin_detail) if part)
+    return result
+
+
+def audit_channel(recipe: Recipe, target: Target, http: HttpClient) -> Result:
     if recipe.metadata_error and not recipe.fields:
         return uncertain_result(recipe, target, recipe.metadata_error)
     if not recipe.pkgver:
@@ -1255,6 +1361,7 @@ def inventory_records(recipes: Sequence[Recipe], overrides: Mapping[str, Mapping
                 "upstream": upstream,
                 "tag_prefix": target.tag_prefix,
                 "required_assets": target.required_assets,
+                "github_archives": [f"{archive.kind}:{archive.label()}" for archive in github_archive_sources(recipe)],
                 "status": status,
                 "detail": detail,
                 "extractor": recipe.extractor,
