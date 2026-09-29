@@ -76,6 +76,8 @@
 ## `stably-orca`
 
 - upstream release source에는 Electron/Node native dependency와 architecture-specific resource가 포함될 수 있다. package manager lockfile만 보고 dependency 변경을 단정하지 않는다.
+- upstream은 release 게시 전후로 같은 버전 tag를 다른 commit으로 다시 찍은 적이 있다(1.4.211, 1.4.216). source는 `_commit`으로 고정한 `/archive/<commit>` archive만 쓰며 archive root는 `orca-<full commit>`이다. `audit-overrides.toml`의 `pinned_var = "_commit"`이 tag archive 회귀와 재태깅을 checker에서 막는다.
+- 새 버전은 release `target_commitish`, tag의 peeled commit과 archive 안 `package.json` version이 모두 일치할 때만 pin한다.
 - source archive root, package manager version, native/prebuilt resource와 package staging을 새 release마다 다시 확인한다.
 - 원격 AUR 변경과 로컬 packaging 변경이 갈라져 있을 수 있으므로 배포 전에 양쪽 diff를 비교하고 검증된 packaging 변경을 보존한다.
 - packaged CLI는 별도 system Node가 아니라 `ELECTRON_RUN_AS_NODE=1`로 system Electron runtime을 사용한다. `namcap`의 `node` shebang 감지는 wrapper 실행 계약을 확인한 뒤 false positive 여부를 판정한다.

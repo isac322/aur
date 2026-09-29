@@ -67,6 +67,8 @@ tag_prefix = "v"
 
 [packages.stably-orca]
 selection = "tag"
+tag_prefix = "v"
+pinned_var = "_commit"
 
 [packages.promtool]
 selection = "version"
