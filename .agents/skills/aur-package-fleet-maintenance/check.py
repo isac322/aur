@@ -275,7 +275,7 @@ emit_var() {
             ;;
     esac
 }
-source "$1" >/dev/null
+source "$1" >/dev/null || exit $?
 for name in pkgbase pkgname pkgver pkgrel url arch; do emit_var "$name"; done
 while IFS= read -r name; do
     case "$name" in
@@ -1138,7 +1138,7 @@ def compute_vcs_version(recipe: Recipe, target: Target) -> tuple[str, str]:
         )
         if head.returncode:
             raise AuditError(f"git rev-parse failed: {head.stderr.strip()}")
-        script = r'''source "$1" >/dev/null
+        script = r'''source "$1" >/dev/null || exit $?
 if ! declare -F pkgver >/dev/null; then
     printf 'PKGBUILD has no pkgver() function\n' >&2
     exit 2

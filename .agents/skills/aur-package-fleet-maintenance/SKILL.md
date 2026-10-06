@@ -8,6 +8,7 @@ description: >-
 # AUR package fleet maintenance
 
 이 스킬은 현재 워크스페이스의 canonical 실행 절차다. 과거 실행 결과와 upstream 응답 cache는 재사용하지 않지만, inventory 수집과 버전 판정 코드는 이 스킬의 `check.py`를 매 실행 재사용한다.
+무인·반복(cron, hourly 등) 실행은 매번 새 session에서 시작해 이 스킬을 처음부터 다시 읽는다. 이전 실행의 절차를 기억으로 재현하지 않는다.
 
 ## 권위, 승인과 package notes
 
@@ -118,7 +119,9 @@ architecture별 source는 모든 선언 arch의 asset 존재, SHA-256과 payload
 GitHub source archive는 새 package든 버전업이든 tag URL을 쓰지 않는다. 새 tag의 peeled commit(`git ls-remote <repo> 'refs/tags/<tag>' 'refs/tags/<tag>^{}'`; annotated는 `^{}` 줄, lightweight는 ref 자체)을 `_commit=<full commit>`으로 먼저 바꾸고 `"<name>-${pkgver}-${_commit}.tar.gz::https://github.com/<o>/<r>/archive/${_commit}.tar.gz"`를 해시한다. archive root는 `<r>-${_commit}`이므로 `cd`·`_srcdir` 경로를 함께 맞추고, archive 안 version metadata가 `pkgver`와 일치하는지 확인한다.
 같은 버전에서 checksum만 틀리면 upstream 재태깅으로 보고 checksum만 덮어쓰지 않는다. 옮겨진 tag의 commit과 release를 다시 검증한 뒤 pin·checksum·`pkgrel`을 함께 바꾸는 별도 변경으로 다룬다.
 확인된 dependency만 반영하고 근거가 사라진 patch, workaround, stale 변수·파일을 제거한다.
-build, package, check, completion, service/install을 새 계약에 맞추고 기존 스타일과 Arch 규칙을 지킨 뒤 최종 PKGBUILD에서 `.SRCINFO`를 다시 생성한다.
+build, package, check, completion, service/install을 새 계약에 맞추고 기존 스타일과 Arch 규칙을 지킨다.
+checksum·pin 변경은 배열·변수 이름 기준으로 전체를 교체한다(`sha256sums=( ... )`·`sha256sums_<arch>=( ... )` 블록 전체 재작성, 또는 verify container 안에서 `updpkgsums` 후 arch별 값을 위 규칙대로 재확인). 줄 번호만으로 patch하지 않는다.
+편집 후 `bash -n PKGBUILD`가 통과해야 한다. `.SRCINFO`는 손으로 고치지 않고 최종 PKGBUILD에서 `makepkg --printsrcinfo`로만 재생성한다(macOS host에서는 container 안에서 실행).
 
 ## Step 5: 패키지 검증
 
@@ -147,7 +150,8 @@ build, package, check, completion, service/install을 새 계약에 맞추고 �
 dependency, compiler, toolchain, Meson/CMake나 `PKG_CONFIG_PATH` 등 환경을 바꿨다면 새 checkout, cleanbuild, `setup --wipe` 등 clean state에서 재검증한다.
 일부 dependency archive만 푼 partial root에 전역 `PKG_CONFIG_SYSROOT_DIR`를 설정하지 않는다.
 
-검증 환경은 다음 순서로 선택한다.
+검증 환경은 다음 순서로 선택한다. 이 macOS host에서는 `scripts/verify-package.sh <pkgdir>`(x86_64·aarch64 Docker Arch container)가 1~2를 충족하는 표준 환경이다.
+`check.py audit`은 upstream 최신판 판정 도구일 뿐 검증이 아니며, `current` 결과를 validation 근거로 쓰지 않는다.
 
 1. Arch clean chroot/devtools
 2. 필요한 공식/AUR dependency를 정상 설치한 disposable root
@@ -159,7 +163,10 @@ Python은 archive 안 `site-packages`를 `PYTHONPATH`에 넣고 entry point를 �
 
 ## Step 6: Git 동기화와 배포
 
-수정·버전업 승인을 받아 검증이 완료된 package는 별도 commit/push 요청을 기다리지 않고 모두 배포한다. 사용자가 같은 요청에서 commit이나 push를 명시적으로 금지한 package만 제외한다.
+아래 배포 gate를 통과한 package는 수정·버전업 승인 범위 안에서 별도 commit/push 요청을 기다리지 않고 모두 배포한다. 사용자가 같은 요청에서 commit이나 push를 명시적으로 금지한 package만 제외한다.
+
+배포 gate: 이번 실행에서 commit할 바로 그 파일 상태로 `scripts/verify-package.sh <pkgdir>`가 선언된 모든 arch에 `VERIFY <pkgbase> <arch> PASS`를 출력한 package만 commit·push한다. 그 줄을 tally 근거로 그대로 인용한다.
+gate 이후 파일이 바뀌면 다시 실행한다. validation이 `partial`·`blocked`이면 push하지 않고 `validation_blocked`, `failed`이면 `validation_failed`로 기록한다.
 
 1. 모노레포 루트에서 패키지 파일만 독립 커밋한다: `git add <pkg>/PKGBUILD <pkg>/.SRCINFO && git commit -m "..."`
 2. commit 메시지에는 자동 attribution footer를 넣지 않는다. 여러 패키지를 한 커밋에 묶지 않는다.

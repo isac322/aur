@@ -82,6 +82,8 @@
 - 원격 AUR 변경과 로컬 packaging 변경이 갈라져 있을 수 있으므로 배포 전에 양쪽 diff를 비교하고 검증된 packaging 변경을 보존한다.
 - packaged CLI는 별도 system Node가 아니라 `ELECTRON_RUN_AS_NODE=1`로 system Electron runtime을 사용한다. `namcap`의 `node` shebang 감지는 wrapper 실행 계약을 확인한 뒤 false positive 여부를 판정한다.
 - 번들된 node-pty, parcel watcher, sherpa-onnx와 browser binary의 ELF dependency 때문에 `glibc`와 `gcc-libs`를 직접 runtime dependency로 유지한다.
+- upstream `build:cli` 등 package script가 bare `pnpm`을 호출한다. `build()`가 고정한 `$srcdir/pnpm`을 `PATH` 앞에 두지 않으면 pnpm이 없는 clean container에서 `pnpm: command not found`로 실패한다. host에 설치된 pnpm으로 통과한 빌드는 검증으로 인정하지 않는다.
+- Arch Linux ARM repo에는 `electron43`이 없다. aarch64 검증은 `scripts/verify-package.sh`가 AUR provider(`electron43-bin`)를 container 안에서 빌드해 충족한다.
 
 ## 정적 Go `-bin` 패키지
 

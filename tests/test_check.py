@@ -296,5 +296,59 @@ class CommitPinTest(unittest.TestCase):
         self.assertIn("standalone commit archive", detail)
 
 
+BROKEN_PKGBUILD = """pkgname=demo
+pkgver=1.0
+pkgrel=1
+arch=('x86_64' 'aarch64')
+source_aarch64=(
+  "demo-$pkgver-aarch64.tar.gz::https://example.invalid/demo-aarch64.tar.gz"
+sha256sums=('abc')
+"""
+
+
+class MetadataParseFailureTest(unittest.TestCase):
+    """A PKGBUILD bash cannot parse must fail extraction, never yield partial fields."""
+
+    def write(self, root: Path, text: str) -> Path:
+        path = root / "demo" / "PKGBUILD"
+        path.parent.mkdir()
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_mid_file_syntax_error_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write(Path(tmp), BROKEN_PKGBUILD)
+            with self.assertRaises(check.AuditError) as caught:
+                check.bash_metadata(path)
+        # isolated_env pins LC_ALL=C.UTF-8, so bash reports in English.
+        self.assertIn("syntax error", str(caught.exception))
+
+    def test_valid_pkgbuild_still_returns_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write(Path(tmp), pkgbuild('"$url/archive/v$pkgver.tar.gz"'))
+            fields = check.bash_metadata(path)
+        self.assertEqual(["1.2.3"], fields["pkgver"])
+        self.assertEqual(["SKIP"], fields["sha256sums"])
+
+    def test_extract_metadata_records_error_and_audits_uncertain(self):
+        real_which = check.shutil.which
+
+        def which(name, *args, **kwargs):
+            return None if name == "makepkg" else real_which(name, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = self.write(root, BROKEN_PKGBUILD)
+            with mock.patch.object(check.shutil, "which", side_effect=which):
+                recipe = check.extract_metadata(path, root)
+        self.assertEqual({}, recipe.fields)
+        self.assertEqual("", recipe.pkgver)
+        self.assertIn("syntax error", recipe.metadata_error)
+        target = check.classify(recipe, {"channel": "github", "repo": REPO})
+        result = check.audit_channel(recipe, target, fake_http())
+        self.assertEqual("uncertain", result.status)
+        self.assertIn("syntax error", result.detail)
+
+
 if __name__ == "__main__":
     unittest.main()
