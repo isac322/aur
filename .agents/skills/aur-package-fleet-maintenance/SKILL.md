@@ -8,7 +8,7 @@ description: >-
 # AUR package fleet maintenance
 
 이 스킬은 현재 워크스페이스의 canonical 실행 절차다. 과거 실행 결과와 upstream 응답 cache는 재사용하지 않지만, inventory 수집과 버전 판정 코드는 이 스킬의 `check.py`를 매 실행 재사용한다.
-무인·반복(cron, hourly 등) 실행은 매번 새 session에서 시작해 이 스킬을 처음부터 다시 읽는다. 이전 실행의 절차를 기억으로 재현하지 않는다.
+무인·반복(cron, hourly 등) 실행은 같은 session을 이어 쓰더라도 매 실행 시작 시 이 스킬을 처음부터 다시 읽는다. 이전 실행의 절차를 기억으로 재현하지 않는다.
 
 ## 권위, 승인과 package notes
 
