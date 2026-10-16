@@ -91,6 +91,7 @@ VCS package는 target branch/ref, 원격 HEAD와 실제 `pkgver()`를 비교한�
 1. AUR sync 후 `check.py audit --json` 결과를 기준으로 공식 최신판을 최초 판정한다.
 2. 실제 편집 직전에 `check.py audit --json --only <pkgbase>`로 같은 공식 채널을 재조회한다. 새 release/ref면 기존 계획과 checksum을 폐기하고 영향 감사부터 반복한다.
 3. commit/push 직전에 같은 `--only <pkgbase>` 감사를 마지막으로 실행한다. 새 release/ref면 오래된 변경을 push하지 않고 영향 감사부터 반복한다.
+이전 실행의 `validation_failed`·`blocked`는 동일한 upstream version/ref, packaging, environment 조합에 대한 evidence일 뿐이며 다른 입력의 hold verdict로 상속하지 않는다. version/ref/packaging/environment 중 하나라도 바뀌면 이전 보류 판정을 폐기하고 변경 영향 감사와 현재 입력의 검증을 새로 수행한다. 동일한 전체 입력이면 이전 실패를 historical evidence로 재사용할 수 있지만, 원래 version/ref/environment와 timestamp 및 `not rerun this invocation`을 명시하고 이번 실행의 failure로 주장하지 않는다. 이번 invocation에서 정확히 commit할 파일 상태로 모든 선언 architecture의 `VERIFY ... PASS`가 없으면 push하지 않는다.
 
 checksum 성공만으로 payload 버전을 증명하지 않는다. archive root, package metadata, source manifest나 binary `--version`으로 최종 `pkgver`와 일치함을 확인한다.
 감사 전용 요청이면 Step 3까지 수행하고 `AGENTS.md`의 그룹별 변경 전 보고 형식으로 보고한 뒤 멈춘다.
@@ -126,6 +127,7 @@ checksum·pin 변경은 배열·변수 이름 기준으로 전체를 교체한�
 ## Step 5: 패키지 검증
 
 ### 공통
+`validation_failed`·`blocked` 재사용과 동일 입력의 retry 여부는 Step 2 규칙을 따른다. 배포의 `VERIFY <pkgbase> <arch> PASS` gate는 약화하지 않으며, 같은 session 사용 금지나 model 변경을 요구하지 않는다.
 
 - PKGBUILD 문법, source·checksum, patch·prepare와 `makepkg --printsrcinfo` 대 `.SRCINFO`의 byte-identical 일치
 - 생성 package metadata와 dependency, archive의 예상 밖 파일·architecture 부재

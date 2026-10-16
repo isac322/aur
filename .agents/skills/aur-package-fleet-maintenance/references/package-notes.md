@@ -4,6 +4,14 @@
 
 각 항목은 감사의 출발점이다. 적용 전에 현재 PKGBUILD, upstream metadata와 release artifact에서 여전히 유효한지 재검증한다. 계약이 사라졌으면 이 문서에서도 제거한다.
 
+## `opencode-desktop`
+
+- v2는 desktop renderer만 빌드해서는 충분하지 않으며, source-built CLI를 먼저 만들고 desktop build에 `OPENCODE_CLI_DIST`로 그 dist 경로를 전달해야 한다.
+- system Electron44 계약과 main process의 lazy chunks를 함께 검증한다. `packages/desktop/out/main` 산출물을 임의로 제거하거나 평탄화하지 않는다.
+- electron-builder의 architecture별 unpacked output directory는 `$CARCH`에 따라 `linux-unpacked` 또는 `linux-arm64-unpacked`이므로 x86_64 경로를 고정 가정하지 않는다.
+- v2 stable tag에는 GitHub Release object가 없고 게시된 Release는 v1에 남아 있으므로 `audit-overrides.toml`의 `selection = "tag"`는 의도된 설정이다.
+- 이 항목에는 빠르게 stale해지는 v2 version/commit 상수를 기록하지 않는다. 현재 tag/ref와 packaging contract를 매번 upstream 및 PKGBUILD에서 재검증한다.
+
 ## `codex-lb`
 
 - Python package이지만 dashboard 정적 자산, CLI entry point, DB helper, systemd service, sysusers와 tmpfiles까지 하나의 패키징 계약을 이룬다. Python wheel만 성공했다고 전체 패키지가 검증된 것은 아니다.
