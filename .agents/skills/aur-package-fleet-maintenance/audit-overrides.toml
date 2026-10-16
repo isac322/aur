@@ -70,3 +70,8 @@ tag_prefix = "v"
 
 [packages.promtool]
 selection = "version"
+
+# v2 stable tags have no GitHub Release objects; published releases remain v1.
+[packages.opencode-desktop]
+selection = "tag"
+tag_prefix = "v"
