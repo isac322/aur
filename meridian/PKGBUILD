@@ -8,9 +8,9 @@
 #       adds a canonical LICENSE file.
 
 pkgname=meridian
-pkgver=1.83.1
+pkgver=1.84.0
 pkgrel=1
-_commit=095b4869b5fe386e2f3a273cc5b60ec3853c8659
+_commit=0c9fcc93048efcd3df9faa9b3c4fb63309dc6018
 pkgdesc='Local Anthropic API powered by your Claude Max or Antigravity subscription'
 arch=('x86_64' 'aarch64')
 url='https://github.com/rynfar/meridian'
@@ -26,7 +26,7 @@ source=(
   "${pkgname}-${pkgver}-${_commit}.tar.gz::${url}/archive/${_commit}.tar.gz"
   "${pkgname}.service"
 )
-sha256sums=('7e3a21c1e79a2f5957e6eb3ff7bf14678c63f521eeb0e3fef8e3eed404fa0238'
+sha256sums=('5b18dc24e5aa6d2107ab568532d178ac363ada8570595eeb0e5f696fa59a0cc7'
             '214cb5117909c4c67be2e6f2a8031856a7bb05814093d0d39486027e11873b75')
 
 build() {
