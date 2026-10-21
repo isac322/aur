@@ -8,9 +8,9 @@
 #       adds a canonical LICENSE file.
 
 pkgname=meridian
-pkgver=1.84.0
+pkgver=1.85.0
 pkgrel=1
-_commit=0c9fcc93048efcd3df9faa9b3c4fb63309dc6018
+_commit=d35fd0259ee4cead19358294d92ba718b4491fd1
 pkgdesc='Local Anthropic API powered by your Claude Max or Antigravity subscription'
 arch=('x86_64' 'aarch64')
 url='https://github.com/rynfar/meridian'
@@ -26,7 +26,7 @@ source=(
   "${pkgname}-${pkgver}-${_commit}.tar.gz::${url}/archive/${_commit}.tar.gz"
   "${pkgname}.service"
 )
-sha256sums=('5b18dc24e5aa6d2107ab568532d178ac363ada8570595eeb0e5f696fa59a0cc7'
+sha256sums=('ae746c6f6ecd07ea45f903fb265ea9148e9a7bc83aea35c32c3fd7bd109e2a14'
             '214cb5117909c4c67be2e6f2a8031856a7bb05814093d0d39486027e11873b75')
 
 build() {
@@ -35,43 +35,8 @@ build() {
   bun install --frozen-lockfile --linker=hoisted
   bun run build
 
-  # Bun bundles libsql's CommonJS loader and freezes its build-time __dirname.
-  # Relocate that path and its dynamic native-module require to the installed
-  # node_modules tree. Match the generated code instead of a hashed chunk name,
-  # and fail if upstream or Bun changes the expected bundle shape.
-  local _libsql_build_dir="${srcdir}/${pkgname}-${_commit}/node_modules/libsql"
-  local _libsql_runtime_dir="/usr/lib/${pkgname}/node_modules/libsql"
-  local _libsql_dir_decl="var __dirname = \"${_libsql_build_dir}\";"
-  local _libsql_runtime_decl="var __dirname = \"${_libsql_runtime_dir}\";"
-  local _libsql_native_require='return __require(`@libsql/${target}`);'
-  local _libsql_runtime_require='return __require(`${__dirname}/../@libsql/${target}`);'
-  local -a _libsql_bundles
-
-  mapfile -t _libsql_bundles < <(grep -rlF -- "${_libsql_dir_decl}" dist)
-  if (( ${#_libsql_bundles[@]} != 1 )); then
-    printf 'ERROR: expected exactly one bundled libsql build path, found %d\n' \
-      "${#_libsql_bundles[@]}" >&2
-    return 1
-  fi
-  if [[ $(grep -Fc -- "${_libsql_dir_decl}" "${_libsql_bundles[0]}") -ne 1 ||
-        $(grep -Fc -- "${_libsql_native_require}" "${_libsql_bundles[0]}") -ne 1 ]]; then
-    printf 'ERROR: unexpected bundled libsql loader shape in %s\n' \
-      "${_libsql_bundles[0]}" >&2
-    return 1
-  fi
-
-  sed -i \
-    -e "s|${_libsql_dir_decl}|${_libsql_runtime_decl}|" \
-    -e "s|${_libsql_native_require}|${_libsql_runtime_require}|" \
-    "${_libsql_bundles[0]}"
-
-  if [[ $(grep -Fc -- "${_libsql_runtime_decl}" "${_libsql_bundles[0]}") -ne 1 ||
-        $(grep -Fc -- "${_libsql_runtime_require}" "${_libsql_bundles[0]}") -ne 1 ]] ||
-     grep -rFq -- "${srcdir}" dist; then
-    printf 'ERROR: failed to relocate bundled libsql loader to %s\n' \
-      "${_libsql_runtime_dir}" >&2
-    return 1
-  fi
+  # Upstream now builds with `--external libsql`, so bun no longer inlines
+  # the libsql loader with frozen build-time paths.
   # Reinstall with production-only deps so the shipped node_modules tree is
   # free of devDependencies (bun2nix, typescript, @types/*, etc.). dist/ from
   # the build above is preserved.
