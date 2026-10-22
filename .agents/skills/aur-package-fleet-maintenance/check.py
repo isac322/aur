@@ -914,6 +914,8 @@ def audit_forge(recipe: Recipe, target: Target, http: HttpClient) -> Result:
     if target.channel == "github":
         base = f"https://api.github.com/repos/{target.repo}"
         releases = http.get_paginated_json(base + "/releases?per_page=100", 100)
+        if not releases:
+            releases = http.get_paginated_json(base + "/releases?per_page=30", 30)
         tag_endpoint = "/tags?per_page=100"
         tag_page_size = 100
     else:
