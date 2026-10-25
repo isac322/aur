@@ -115,23 +115,29 @@ fi
 # Dependencies missing from the container's repos (e.g. electron on Arch Linux
 # ARM) are built from their AUR provider, as an AUR helper would do.
 aur_dep() {
-  local dep=$1 name dir
+  local dep=$1 name dir sub
+  dep=${dep%%[<>=]*}
+  pacman -T "$dep" >/dev/null && return 0
+  if pacman -Sp "$dep" >/dev/null 2>&1; then
+    pacman -S --noconfirm --needed "$dep" >/dev/null || return 1
+    return 0
+  fi
   name=$(curl -fsS "https://aur.archlinux.org/rpc/v5/search/$dep?by=provides" |
     jq -r --arg d "$dep" '[.results[] | select(.OutOfDate == null)] |
       (map(select(.Name == $d)) + map(select(.Name == ($d + "-bin"))) + .)[0].Name // empty')
   [ -n "$name" ] || return 1
   echo "== AUR dependency $dep -> $name"
   dir=$(sudo -u builder mktemp -d)
-  sudo -u builder git clone -q "https://aur.archlinux.org/$name.git" "$dir/$name" &&
-    (cd "$dir/$name" && sudo -u builder -H makepkg -si --noconfirm --needed)
+  sudo -u builder git clone -q "https://aur.archlinux.org/$name.git" "$dir/$name" || return 1
+  while IFS= read -r sub; do
+    aur_dep "$sub" || return 1
+  done < <(cd "$dir/$name" && sudo -u builder makepkg --printsrcinfo | sed -nE "s/^\t(make|check)?depends(_$ARCH)? = ([^<>=]+).*/\3/p" | sort -u)
+  (cd "$dir/$name" && sudo -u builder -H makepkg -si -A --noconfirm --needed)
 }
 pacman -S --noconfirm --needed git >/dev/null || fail pacman-setup
 while IFS= read -r dep; do
-  dep=${dep%%[<>=]*}
-  pacman -T "$dep" >/dev/null && continue
-  pacman -Sp "$dep" >/dev/null 2>&1 && continue
   aur_dep "$dep" || fail "aur-dependency:$dep"
-done < <(sed -nE "s/^\t(make|check)?depends(_$ARCH)? = //p" /tmp/srcinfo.gen | sort -u)
+done < <(sed -nE "s/^\t(make|check)?depends(_$ARCH)? = ([^<>=]+).*/\3/p" /tmp/srcinfo.gen | sort -u)
 
 echo "== makepkg -s -f"
 asb makepkg -s -f --noconfirm || fail build
