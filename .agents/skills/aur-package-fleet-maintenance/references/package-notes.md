@@ -11,6 +11,7 @@
 - electron-builder의 architecture별 unpacked output directory는 `$CARCH`에 따라 `linux-unpacked` 또는 `linux-arm64-unpacked`이므로 x86_64 경로를 고정 가정하지 않는다.
 - v2 stable tag에는 GitHub Release object가 없고 게시된 Release는 v1에 남아 있으므로 `audit-overrides.toml`의 `selection = "tag"`는 의도된 설정이다.
 - 이 항목에는 빠르게 stale해지는 v2 version/commit 상수를 기록하지 않는다. 현재 tag/ref와 packaging contract를 매번 upstream 및 PKGBUILD에서 재검증한다.
+- upstream desktop build가 아이콘 파일명에서 `.desktop` 접미사를 제거(`ai.opencode.png`)할 수 있으므로 hicolor icon 수집 경로가 실제 생성 파일명과 일치하는지 확인한다.
 
 ## `codex-lb`
 
@@ -80,6 +81,7 @@
 - VCS package의 stale 여부는 AUR에 기록된 `pkgver` 문자열과 upstream branch HEAD를 비교해 판정한다.
 - upstream의 tag가 branch HEAD보다 뒤처질 수 있다. PKGBUILD의 실제 `pkgver()` 공식을 target checkout에서 실행해 예상 버전을 재계산한다.
 - 기존 `pkgver`의 commit suffix가 현재 upstream history에 존재하는지 확인하고 branch 변경이나 history rewrite와 단순 stale 상태를 구분한다.
+- upstream `gdbuspp` 및 AUR `gdbuspp-git`이 `-m64` 컴파일러 체크로 `x86_64`만 지원하므로 architecture 선언 정합성을 유지하며, 라이브 시스템 D-Bus 데몬이 없는 컨테이너 환경의 `check()`는 `--suite standalone` 테스트 스위트를 실행한다.
 
 ## `stably-orca`
 
@@ -92,6 +94,7 @@
 - 번들된 node-pty, parcel watcher, sherpa-onnx와 browser binary의 ELF dependency 때문에 `glibc`와 `gcc-libs`를 직접 runtime dependency로 유지한다.
 - upstream `build:cli` 등 package script가 bare `pnpm`을 호출한다. `build()`가 고정한 `$srcdir/pnpm`을 `PATH` 앞에 두지 않으면 pnpm이 없는 clean container에서 `pnpm: command not found`로 실패한다. host에 설치된 pnpm으로 통과한 빌드는 검증으로 인정하지 않는다.
 - Arch Linux ARM repo에는 `electron43`이 없다. aarch64 검증은 `scripts/verify-package.sh`가 AUR provider(`electron43-bin`)를 container 안에서 빌드해 충족한다.
+- upstream은 commit archive(비-git 디렉터리)에서 `git rev-parse HEAD`를 호출하는 `build-source-commit.mjs`와 AppImage/glibc floor/Wayland clipboard 검증 훅, `build:web:from-renderer` 빌드 단계를 사용한다. 버전업 시 고정된 `_commit` 주입과 신규 `electron-builder` 훅 및 web bundle 타겟 누락 여부를 함께 확인한다.
 
 ## 정적 Go `-bin` 패키지
 

@@ -91,7 +91,9 @@ VCS package는 target branch/ref, 원격 HEAD와 실제 `pkgver()`를 비교한�
 1. AUR sync 후 `check.py audit --json` 결과를 기준으로 공식 최신판을 최초 판정한다.
 2. 실제 편집 직전에 `check.py audit --json --only <pkgbase>`로 같은 공식 채널을 재조회한다. 새 release/ref면 기존 계획과 checksum을 폐기하고 영향 감사부터 반복한다.
 3. commit/push 직전에 같은 `--only <pkgbase>` 감사를 마지막으로 실행한다. 새 release/ref면 오래된 변경을 push하지 않고 영향 감사부터 반복한다.
-이전 실행의 `validation_failed`·`blocked`는 동일한 upstream version/ref, packaging, environment 조합에 대한 evidence일 뿐이며 다른 입력의 hold verdict로 상속하지 않는다. version/ref/packaging/environment 중 하나라도 바뀌면 이전 보류 판정을 폐기하고 변경 영향 감사와 현재 입력의 검증을 새로 수행한다. 동일한 전체 입력이면 이전 실패를 historical evidence로 재사용할 수 있지만, 원래 version/ref/environment와 timestamp 및 `not rerun this invocation`을 명시하고 이번 실행의 failure로 주장하지 않는다. 이번 invocation에서 정확히 commit할 파일 상태로 모든 선언 architecture의 `VERIFY ... PASS`가 없으면 push하지 않는다.
+4. 이전 실행의 `validation_failed`·`blocked`는 동일한 upstream version/ref, packaging, environment 조합에 대한 evidence일 뿐이며 다른 입력의 hold verdict로 상속하지 않는다. version/ref/packaging/environment 중 하나라도 바뀌었거나, 이전 시도 후 PKGBUILD가 원복되어 아직 새 버전으로 커밋되지 않은 `outdated` 상태라면 "동일한 전체 입력"이 아니므로 이전 실패 기록이나 세션 히스토리를 이유로 Step 3~5를 건너뛰지 않는다.
+5. 빌드 시스템 전환, 의존성·컴파일러·LTO 플래그 변경, `prepare()` 패치·검증 훅 불일치, 산출물·아이콘 경로 변경, `scripts/verify-package.sh`의 의존성 해석 결함처럼 로컬 PKGBUILD나 검증 스크립트를 수정해 해결할 수 있는 실패는 보류 사유가 아니라 이번 실행에서 고쳐야 할 작업 대상이다.
+6. 오직 upstream 자산 누락이나 upstream 자체 결함처럼 로컬 패키징·검증 스크립트 수정만으로 해결할 수 없음이 확인된 외부 차단 요인에 한해, 동일한 전체 입력일 때 이전 실패를 historical evidence로 재사용할 수 있으며(원래 version/ref/environment, timestamp, `not rerun this invocation` 명시), 이번 실행의 failure로 주장하지 않는다. 이번 invocation에서 정확히 commit할 파일 상태로 모든 선언 architecture의 `VERIFY ... PASS`가 없으면 push하지 않는다.
 
 checksum 성공만으로 payload 버전을 증명하지 않는다. archive root, package metadata, source manifest나 binary `--version`으로 최종 `pkgver`와 일치함을 확인한다.
 감사 전용 요청이면 Step 3까지 수행하고 `AGENTS.md`의 그룹별 변경 전 보고 형식으로 보고한 뒤 멈춘다.
