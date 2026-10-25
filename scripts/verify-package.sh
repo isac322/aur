@@ -122,13 +122,22 @@ aur_dep() {
     pacman -S --noconfirm --needed "$dep" >/dev/null || return 1
     return 0
   fi
-  name=$(curl -fsS "https://aur.archlinux.org/rpc/v5/search/$dep?by=provides" |
-    jq -r --arg d "$dep" '[.results[] | select(.OutOfDate == null)] |
-      (map(select(.Name == $d)) + map(select(.Name == ($d + "-bin"))) + .)[0].Name // empty')
-  [ -n "$name" ] || return 1
-  echo "== AUR dependency $dep -> $name"
   dir=$(sudo -u builder mktemp -d)
-  sudo -u builder git clone -q "https://aur.archlinux.org/$name.git" "$dir/$name" || return 1
+  if [ -f "/repo/$dep/PKGBUILD" ]; then
+    name=$dep
+    echo "== AUR dependency $dep -> /repo/$name"
+    mkdir -p "$dir/$name"
+    cp -a "/repo/$name/." "$dir/$name/"
+    rm -rf "$dir/$name/src" "$dir/$name/pkg" "$dir/$name/.git"
+    chown -R builder:builder "$dir/$name"
+  else
+    name=$(curl -fsS --retry 3 --max-time 30 "https://aur.archlinux.org/rpc/v5/search/$dep?by=provides" |
+      jq -r --arg d "$dep" '[.results[] | select(.OutOfDate == null)] |
+        (map(select(.Name == $d)) + map(select(.Name == ($d + "-bin"))) + .)[0].Name // empty')
+    [ -n "$name" ] || return 1
+    echo "== AUR dependency $dep -> $name"
+    sudo -u builder git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 clone -q --depth 1 "https://aur.archlinux.org/$name.git" "$dir/$name" || return 1
+  fi
   while IFS= read -r sub; do
     aur_dep "$sub" || return 1
   done < <(cd "$dir/$name" && sudo -u builder makepkg --printsrcinfo | sed -nE "s/^\t(make|check)?depends(_$ARCH)? = ([^<>=]+).*/\3/p" | sort -u)
@@ -177,8 +186,9 @@ for a in "${arches[@]}"; do
   esac
   out="$scratch/$a"
   mkdir -p "$out"
+  reporoot=$(cd "$pkgdir" && git rev-parse --show-toplevel 2>/dev/null || dirname "$pkgdir")
   cmd=(docker run --rm --platform "$platform"
-    -v "$pkgdir:/in:ro" -v "$out:/out"
+    -v "$pkgdir:/in:ro" -v "$reporoot:/repo:ro" -v "$out:/out"
     -e "ARCH=$a" -e "SMOKE=$smoke"
     "$image" bash -c "$INNER")
   echo "==== $pkgbase $a ($image)"
