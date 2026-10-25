@@ -3,10 +3,12 @@
 
 _pkgname=openvpn3-linux
 pkgname=openvpn3-git
-pkgver=27.r74.gcb689dd
+pkgver=27.r79.g1017fbe
 pkgrel=1
 pkgdesc='OpenVPN 3 Linux client'
-arch=('x86_64' 'aarch64')
+# Upstream gdbuspp master (gdbuspp-git) checks cxx.has_argument('-m64') in
+# meson.build, which rejects aarch64 GCC; gdbuspp-git in AUR is x86_64-only.
+arch=('x86_64')
 provides=("openvpn3=${pkgver}")
 conflicts=('openvpn3')
 url="https://codeberg.org/OpenVPN/$_pkgname"
@@ -67,14 +69,16 @@ build() {
 }
 
 check() {
+  # Only standalone tests can run in a build container without a live system
+  # D-Bus daemon; use a separate build dir so _builddir keeps test_programs=disabled.
   arch-meson \
     --auto-features auto \
       "${_pkgname}" \
-      _builddir \
+      _testbuilddir \
     -Dtest_programs=enabled \
-    -Dunit_tests=enabled
-  meson compile -C _builddir
-  meson test -C _builddir
+    -Dunit_tests=disabled
+  meson compile -C _testbuilddir
+  meson test -C _testbuilddir --suite standalone
 }
 
 package() {
