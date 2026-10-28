@@ -1,6 +1,6 @@
 pkgbase = meridian
 	pkgdesc = Local Anthropic API powered by your Claude Max or Antigravity subscription
-	pkgver = 1.86.0
+	pkgver = 1.87.0
 	pkgrel = 1
 	url = https://github.com/rynfar/meridian
 	install = meridian.install
@@ -15,9 +15,9 @@ pkgbase = meridian
 	conflicts = claude-max-proxy
 	options = !strip
 	options = !debug
-	source = meridian-1.86.0-e521c5feb190d1b73b812b42bb51d1d068b3f11c.tar.gz::https://github.com/rynfar/meridian/archive/e521c5feb190d1b73b812b42bb51d1d068b3f11c.tar.gz
+	source = meridian-1.87.0-94725800af58015daae796be04034ae03d2fec73.tar.gz::https://github.com/rynfar/meridian/archive/94725800af58015daae796be04034ae03d2fec73.tar.gz
 	source = meridian.service
-	sha256sums = 1bce248ca46ff13de003509845948883ed090ad9a6f5f66ea88e5fb91443ab4c
+	sha256sums = 0b97ece8c66555d8388fffcffe69159c3e117c107ce4c27f15d5209f8b2f616a
 	sha256sums = 214cb5117909c4c67be2e6f2a8031856a7bb05814093d0d39486027e11873b75
 
 pkgname = meridian
