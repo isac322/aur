@@ -122,6 +122,7 @@ architecture별 source는 모든 선언 arch의 asset 존재, SHA-256과 payload
 GitHub source archive는 새 package든 버전업이든 tag URL을 쓰지 않는다. 새 tag의 peeled commit(`git ls-remote <repo> 'refs/tags/<tag>' 'refs/tags/<tag>^{}'`; annotated는 `^{}` 줄, lightweight는 ref 자체)을 `_commit=<full commit>`으로 먼저 바꾸고 `"<name>-${pkgver}-${_commit}.tar.gz::https://github.com/<o>/<r>/archive/${_commit}.tar.gz"`를 해시한다. archive root는 `<r>-${_commit}`이므로 `cd`·`_srcdir` 경로를 함께 맞추고, archive 안 version metadata가 `pkgver`와 일치하는지 확인한다.
 같은 버전에서 checksum만 틀리면 upstream 재태깅으로 보고 checksum만 덮어쓰지 않는다. 옮겨진 tag의 commit과 release를 다시 검증한 뒤 pin·checksum·`pkgrel`을 함께 바꾸는 별도 변경으로 다룬다.
 확인된 dependency만 반영하고 근거가 사라진 patch, workaround, stale 변수·파일을 제거한다.
+`prepare()` patch는 upstream build wrapper가 Docker를 호출하거나 AppImage/Ubuntu glibc floor를 검사한다는 이유만으로 upstream runtime helper, `extraResources`/`files` 항목, post-pack 산출물 finalizer를 절대 삭제하거나 우회해서는 안 된다. AppImage glibc floor 검사나 system Electron으로 실행할 때 불필요한 bundled AppImage Node runtime처럼 배포 형식에만 해당하는 gate와, 설치된 애플리케이션이 실제 사용하는 runtime binary/resource를 구분한다. 후자는 container toolchain으로 `build()`에서 native compile하고 `extraResources` 및 package staging에 유지하며 `check()`와 `package()`에서 존재·실행 가능성을 검증한다. clean container에서 required runtime artifact를 native build할 수 없으면 기능을 제거하지 말고 `validation_blocked`/`validation_failed`로 기록한다.
 build, package, check, completion, service/install을 새 계약에 맞추고 기존 스타일과 Arch 규칙을 지킨다.
 checksum·pin 변경은 배열·변수 이름 기준으로 전체를 교체한다(`sha256sums=( ... )`·`sha256sums_<arch>=( ... )` 블록 전체 재작성, 또는 verify container 안에서 `updpkgsums` 후 arch별 값을 위 규칙대로 재확인). 줄 번호만으로 patch하지 않는다.
 편집 후 `bash -n PKGBUILD`가 통과해야 한다. `.SRCINFO`는 손으로 고치지 않고 최종 PKGBUILD에서 `makepkg --printsrcinfo`로만 재생성한다(macOS host에서는 container 안에서 실행).
@@ -139,6 +140,7 @@ checksum·pin 변경은 배열·변수 이름 기준으로 전체를 교체한�
 
 - 실제 build와 package 단계
 - 가능한 upstream test 또는 package smoke test, 산출물 경로와 실행 가능성
+- upstream packaging manifest(`extraResources`, `files`, native helper binary)와 `prepare()` config rewrite를 staged package(`$pkgdir`)와 대조해 main/renderer code가 참조하는 runtime helper/resource가 누락되지 않았는지 확인한다.
 
 ### Binary package
 

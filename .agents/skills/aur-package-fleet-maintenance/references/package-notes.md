@@ -95,6 +95,9 @@
 - upstream `build:cli` 등 package script가 bare `pnpm`을 호출한다. `build()`가 고정한 `$srcdir/pnpm`을 `PATH` 앞에 두지 않으면 pnpm이 없는 clean container에서 `pnpm: command not found`로 실패한다. host에 설치된 pnpm으로 통과한 빌드는 검증으로 인정하지 않는다.
 - Arch Linux ARM repo에는 `electron43`이 없다. aarch64 검증은 `scripts/verify-package.sh`가 AUR provider(`electron43-bin`)를 container 안에서 빌드해 충족한다.
 - upstream은 commit archive(비-git 디렉터리)에서 `git rev-parse HEAD`를 호출하는 `build-source-commit.mjs`와 AppImage/glibc floor/Wayland clipboard 검증 훅, `build:web:from-renderer` 빌드 단계를 사용한다. 버전업 시 고정된 `_commit` 주입과 신규 `electron-builder` 훅 및 web bundle 타겟 누락 여부를 함께 확인한다.
+- Linux Wayland text copy(terminal copy-on-select 및 editor copy 포함)는 `src/main/window/clipboard-text-publisher.ts`에서 `/usr/lib/stably-orca/bin/orca-wayland-clipboard`를 spawn하며 Electron fallback이 없다. 따라서 `wayland`(`libwayland-client.so.0` 및 `<wayland-client.h>`를 제공하는 패키지)는 직접 dependency로 유지한다.
+- `build-wayland-clipboard.mjs`의 Docker는 Ubuntu 20.04 AppImage glibc 2.31 floor를 강제하기 위한 것이다. Arch `prepare()`에서는 `ensureBundledWaylandClipboard`, `verifyLinuxGlibcFloor`, `appImageNodeRuntime`만 우회할 수 있지만, `finalizePackagedWaylandClipboard(resourcesDir)`와 `extraResources`의 `native/wayland-clipboard/.build/${arch}/orca-wayland-clipboard` → `bin/orca-wayland-clipboard` 매핑은 반드시 유지한다.
+- `build()`는 host `gcc`로 `wayland-clipboard.c`와 `x11-clipboard-publisher.c`를 컴파일해 `native/wayland-clipboard/.build/${wayland_arch}/orca-wayland-clipboard`를 생성한다. `check()`는 `native/wayland-clipboard/protocol_test.py`를 실행하고, `package()`는 `/usr/lib/stably-orca/bin/orca-wayland-clipboard`가 executable인지 assert한다.
 
 ## 정적 Go `-bin` 패키지
 
