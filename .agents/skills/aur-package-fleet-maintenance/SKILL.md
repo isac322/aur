@@ -130,6 +130,7 @@ checksum·pin 변경은 배열·변수 이름 기준으로 전체를 교체한�
 ## Step 5: 패키지 검증
 
 ### 공통
+`scripts/verify-package.sh`는 package 이름과 무관하게 설치 직후 `makedepends`·`checkdepends`를 purge한 뒤 모든 package에 다음 5가지 post-install runtime/artifact integrity gate를 자동 적용한다: `prepare()`가 삭제한 `extraResources`/`extraFiles` 목적지 보존, packaged code의 resource-path closure, 설치 파일·wrapper·`.desktop`·systemd 실행 계약, ELF architecture·실행 비트·`DT_NEEDED`/`ldd` closure, Node manifest와 `node_modules` dependency closure. 이 universal gate는 `--smoke` 없이도 항상 실행되며, 실패하면 smoke 단계 전에 검증을 실패시킨다.
 `validation_failed`·`blocked` 재사용과 동일 입력의 retry 여부는 Step 2 규칙을 따른다. 배포의 `VERIFY <pkgbase> <arch> PASS` gate는 약화하지 않으며, 같은 session 사용 금지나 model 변경을 요구하지 않는다.
 
 - PKGBUILD 문법, source·checksum, patch·prepare와 `makepkg --printsrcinfo` 대 `.SRCINFO`의 byte-identical 일치
