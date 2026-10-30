@@ -1,7 +1,7 @@
 # Maintainer: Byeonghoon Yoo <bhyoo@bhyoo.com>
 
 pkgname=opencode-desktop
-pkgver=2.2.1
+pkgver=2.2.2
 pkgrel=1
 pkgdesc='OpenCode desktop app (built from source, runs on system electron44)'
 arch=('x86_64' 'aarch64')
@@ -39,7 +39,7 @@ options=('!strip' '!debug')
 # scanner enumerates source files via the git index when .git is present, and
 # falls back to a traversal that misses ~28% of the renderer's utility classes
 # when it isn't. Cloning the pinned commit preserves .git for the same CSS as CI.
-_commit=3ebcf9a32c7b28f658cfee80775448929361727a
+_commit=098aa7fd6e02b03d6fc410f0b052038c7d4c5e81
 source=(
   "$pkgname-$pkgver-$_commit::git+https://github.com/anomalyco/opencode.git#commit=$_commit"
   "$pkgname.sh"
