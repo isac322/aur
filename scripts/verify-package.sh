@@ -220,6 +220,7 @@ ARCH = sys.argv[1]
 MANIFEST_PRE = sys.argv[2]
 POST_SRC = sys.argv[3]
 FILES = sys.argv[4]
+SRCINFO = sys.argv[5] if len(sys.argv) > 5 else ""
 VERIFY_ROOT = os.environ.get("VERIFY_PACKAGE_ROOT", "").rstrip("/")
 
 
@@ -270,7 +271,12 @@ def add_failure(value):
 with open(input_path(FILES), "r", encoding="utf-8", errors="replace") as f:
     owned = {line.strip() for line in f if line.strip()}
 failures = set()
-
+optdepends_prefixes = set()
+if SRCINFO and os.path.exists(input_path(SRCINFO)):
+    for line in read_text(input_path(SRCINFO)).splitlines():
+        match = re.match(r"^\s*optdepends(?:_\w+)?\s*=\s*([A-Za-z0-9@._+-]+)", line)
+        if match:
+            optdepends_prefixes.add(match.group(1))
 pkg_roots = sorted(
     {logical_package_root(path) for path in owned if logical_package_root(path)}
 )
@@ -315,7 +321,11 @@ code_paths = [
     path
     for path in sorted(owned)
     if path.endswith(".asar")
-    or (path.endswith(".js") and logical_package_root(path))
+    or (
+        path.endswith(".js")
+        and logical_package_root(path)
+        and "/node_modules/" not in path
+    )
 ]
 for origin in code_paths:
     text = read_text(origin)
@@ -350,8 +360,9 @@ for path in sorted(owned):
         add_failure(f"non-executable:{path}")
 
     if (
-        path.startswith("/usr/bin/")
-        or path.startswith("/usr/lib/")
+        re.fullmatch(r"/usr/bin/[^/]+", path)
+        or re.fullmatch(r"/usr/lib/[^/]+/[^/]+", path)
+        or re.fullmatch(r"/usr/lib/[^/]+/bin/[^/]+", path)
     ) and os.path.isfile(actual):
         try:
             with open(actual, "rb") as f:
@@ -364,19 +375,20 @@ for path in sorted(owned):
             first_line,
         ):
             for line in (first_line + body).splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
                 if not line.startswith("exec ") and "/usr/" not in line and "/opt/" not in line:
                     continue
                 for match in re.finditer(
                     r"/usr/[A-Za-z0-9_./+-]+|/opt/[A-Za-z0-9_./+-]+", line
                 ):
-                    token = match.group(0)
+                    token = match.group(0).rstrip(".")
                     before = line[match.start() - 1] if match.start() else ""
                     after = line[match.end()] if match.end() < len(line) else ""
                     if (before and before in "${}%*") or (after and after in "${}%*"):
                         continue
                     if not os.path.exists(rooted(token)):
                         add_failure(f"wrapper-path:{path}:{token}")
-
 
 def desktop_command(value):
     try:
@@ -449,13 +461,33 @@ for path in sorted(owned):
             elif command and not command.startswith("/"):
                 command = f"/usr/bin/{command}"
             if command and not executable(command):
-                add_failure(f"systemd-exec:{path}:{command}")
+                base = posixpath.basename(command)
+                if not (
+                    command.startswith("/usr/bin/")
+                    and command not in owned
+                    and any(
+                        base == opt or base.startswith(opt + "_") or base.startswith(opt + "-")
+                        for opt in optdepends_prefixes
+                    )
+                ):
+                    add_failure(f"systemd-exec:{path}:{command}")
 
 # 4. ELF architecture, dynamic executable bit, and ldd closure.
-machine = {
+MACHINE_BY_ARCH = {
     "x86_64": "Advanced Micro Devices X86-64",
     "aarch64": "AArch64",
-}.get(ARCH)
+}
+ARCH_TOKEN_RE = re.compile(
+    r"(?:^|[^A-Za-z0-9])(arm64|aarch64|x64|amd64|x86_64)(?:[^A-Za-z0-9]|$)",
+    re.IGNORECASE,
+)
+ARCH_BY_TOKEN = {
+    "arm64": "aarch64",
+    "aarch64": "aarch64",
+    "x64": "x86_64",
+    "amd64": "x86_64",
+    "x86_64": "x86_64",
+}
 elf_library_dirs = sorted(
     {
         os.path.dirname(rooted(path))
@@ -474,7 +506,13 @@ for path in sorted(owned):
                 continue
     except OSError:
         continue
-    if machine:
+    token_matches = [
+        ARCH_BY_TOKEN[m.group(1).lower()]
+        for m in ARCH_TOKEN_RE.finditer(path)
+    ]
+    expected_arch = token_matches[-1] if token_matches else ARCH
+    expected_machine = MACHINE_BY_ARCH.get(expected_arch)
+    if expected_machine:
         header = subprocess.run(
             ["readelf", "-h", actual],
             capture_output=True,
@@ -482,8 +520,8 @@ for path in sorted(owned):
             errors="replace",
             check=False,
         ).stdout
-        if machine not in header:
-            add_failure(f"elf-arch:{path}:{ARCH}")
+        if expected_machine not in header:
+            add_failure(f"elf-arch:{path}:{expected_arch}")
     program = subprocess.run(
         ["readelf", "-l", actual],
         capture_output=True,
@@ -503,7 +541,7 @@ for path in sorted(owned):
         errors="replace",
         check=False,
     ).stdout
-    if "NEEDED" in dynamic:
+    if "NEEDED" in dynamic and expected_arch == ARCH:
         env = os.environ.copy()
         env["LD_LIBRARY_PATH"] = ":".join(elf_library_dirs + [rooted("/usr/lib")])
         ldd = subprocess.run(
@@ -566,7 +604,7 @@ if failures:
     sys.exit(1)
 PY
 chmod 0755 /tmp/verify-package-gate.py
-python /tmp/verify-package-gate.py "$ARCH" "$work/.verify-manifest-pre" "$work/src" /tmp/verify-package.files || fail runtime-gate
+python /tmp/verify-package-gate.py "$ARCH" "$work/.verify-manifest-pre" "$work/src" /tmp/verify-package.files /tmp/srcinfo.gen || fail runtime-gate
 
 if [ -n "$SMOKE" ]; then
   echo "== smoke: $SMOKE"

@@ -138,6 +138,7 @@ class VerifyPackageGateTest(unittest.TestCase):
                 str(pre),
                 post_arg,
                 str(file_list),
+                str(info),
             ],
             env=env,
             text=True,
@@ -313,6 +314,40 @@ class VerifyPackageGateTest(unittest.TestCase):
             dep = "/usr/lib/node_modules/@earendil-works/pi-pty/package.json"
             self._write(root, dep, "{}\n")
             result = self._run_gate(root, owned + [dep])
+            self._assert_pass(result)
+
+    def test_third_party_node_modules_and_optdepends_systemd_and_arch_labeled_elf(self) -> None:
+        owned = [
+            "/usr/lib/opencode-desktop/node_modules/electron-updater/out/NsisUpdater.js",
+            "/usr/lib/node_modules/vercel/node_modules/@vercel/fun/dist/src/runtimes/nodejs/bootstrap",
+            "/usr/lib/systemd/user/stably-orca-kwin-virtual@.service",
+            "/usr/lib/stably-orca/ripgrep/linux-arm64/wrong-arch",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write(
+                root,
+                owned[0],
+                "join(process.resourcesPath, 'elevate.exe')\n",
+            )
+            self._write(
+                root,
+                owned[1],
+                "#!/bin/sh\nexport NODE_PATH=/opt/nodejs/node_modules\n",
+                0o755,
+            )
+            self._write(
+                root,
+                owned[2],
+                "[Service]\nExecStart=/usr/bin/kwin_wayland --virtual\n",
+            )
+            self._write(root, owned[3], b"\x7fELF\x02\x01\x01", 0o755)
+            result = self._run_gate(
+                root,
+                owned,
+                fake_tools=True,
+                package_info="\toptdepends = kwin: optional KWin virtual Wayland compositor service\n",
+            )
             self._assert_pass(result)
 
 
