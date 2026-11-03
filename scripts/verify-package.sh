@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# verify-package.sh <pkgdir> [--arch x86_64|aarch64|armv7h|all] [--smoke 'cmd ...']
+# verify-package.sh <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...']
 #
 # Deterministic pre-push gate for one AUR package, run from the macOS host via
 # Docker Arch containers (x86_64: archlinux:base-devel, aarch64/armv7h:
-# menci/archlinuxarm:base-devel). Per arch it checks, in a clean container:
+# menci/archlinuxarm:base-devel). i686 uses the amd64 image with the official
+# multilib compiler and 32-bit runtime, then installs and executes i686 output.
+# This checks the i686 ABI, not Archlinux32 repository compatibility.
+# Per arch it checks, in a clean container:
 #   - `makepkg --printsrcinfo` is byte-identical to the committed .SRCINFO
 #   - `makepkg -s -f` succeeds
 #   - namcap output (informational only, saved per arch)
@@ -19,7 +22,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <pkgdir> [--arch x86_64|aarch64|armv7h|all] [--smoke 'cmd ...']" >&2
+  echo "usage: $0 <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...']" >&2
   exit 2
 }
 
@@ -35,7 +38,7 @@ while [ $# -gt 0 ]; do
     *) usage ;;
   esac
 done
-case $want_arch in x86_64|aarch64|armv7h|all) ;; *) usage ;; esac
+case $want_arch in x86_64|aarch64|armv7h|i686|all) ;; *) usage ;; esac
 
 pkgdir=$(cd "$pkgdir_arg" && pwd)
 [ -f "$pkgdir/PKGBUILD" ] || { echo "error: $pkgdir/PKGBUILD not found" >&2; exit 2; }
@@ -61,7 +64,7 @@ unsupported_arches=()
 while IFS= read -r a; do
   [ -n "$a" ] || continue
   case $a in
-    x86_64|aarch64|armv7h|any) ;;
+    x86_64|aarch64|armv7h|i686|any) ;;
     *) unsupported_arches+=("$a") ;;
   esac
 done <<< "$declared"
@@ -70,7 +73,7 @@ arches=()
 if printf '%s\n' "$declared" | grep -qx any; then
   arches=(x86_64)
 else
-  for a in x86_64 aarch64 armv7h; do
+  for a in x86_64 aarch64 armv7h i686; do
     if printf '%s\n' "$declared" | grep -qx "$a"; then arches+=("$a"); fi
   done
 fi
@@ -87,7 +90,7 @@ if [ "$want_arch" != all ]; then
   fi
 fi
 if [ ${#arches[@]} -eq 0 ]; then
-  echo "error: PKGBUILD arch=() declares neither x86_64, aarch64, armv7h nor any" >&2
+  echo "error: PKGBUILD arch=() declares neither x86_64, aarch64, armv7h, i686 nor any" >&2
   exit 2
 fi
 
@@ -103,6 +106,20 @@ sed -i 's/^DownloadUser/#DownloadUser/' /etc/pacman.conf
 grep -q '^DisableSandbox' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
 pacman -Syu --noconfirm --needed namcap jq >/dev/null || fail pacman-setup
 
+target_env=()
+install_options=(--noconfirm)
+if [ "$ARCH" = i686 ]; then
+  printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+  pacman -Syu --noconfirm --needed gcc-multilib lib32-glibc lib32-gcc-libs >/dev/null || fail multilib-setup
+  sed -i \
+    -e 's/^CARCH=.*/CARCH="i686"/' \
+    -e 's/^CHOST=.*/CHOST="i686-pc-linux-gnu"/' \
+    -e 's/-march=x86-64/-march=i686/g' /etc/makepkg.conf
+  printf '\nCFLAGS+=" -m32"\nCXXFLAGS+=" -m32"\nLDFLAGS+=" -m32"\n' >> /etc/makepkg.conf
+  target_env=(CC="gcc -m32" CXX="g++ -m32" GOOS=linux GOARCH=386 GO386=softfloat CGO_ENABLED=1 PKG_CONFIG_LIBDIR=/usr/lib32/pkgconfig:/usr/share/pkgconfig)
+  install_options+=(--arch i686)
+fi
+
 useradd -m builder
 echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 chmod 0440 /etc/sudoers.d/builder
@@ -115,7 +132,7 @@ find "$work" -maxdepth 1 -type f \( -name '*.tar.*' -o -name '*.tgz' -o -name '*
 chown -R builder:builder /home/builder
 cd "$work"
 
-asb() { sudo -u builder -H env PKGDEST=/home/builder/pkgout "$@"; }
+asb() { sudo -u builder -H env PKGDEST=/home/builder/pkgout "${target_env[@]}" "$@"; }
 
 echo "== .SRCINFO check"
 [ -f .SRCINFO ] || fail srcinfo-missing
@@ -194,7 +211,7 @@ for p in "${pkgs[@]}"; do
 done
 
 echo "== pacman -U"
-pacman -U --noconfirm "${pkgs[@]}" || fail install
+pacman -U "${install_options[@]}" "${pkgs[@]}" || fail install
 
 mapfile -t pkg_names < <(pacman -Qqp "${pkgs[@]}" | sort -u)
 [ ${#pkg_names[@]} -gt 0 ] || fail package-names
@@ -490,9 +507,10 @@ MACHINE_BY_ARCH = {
     "x86_64": "Advanced Micro Devices X86-64",
     "aarch64": "AArch64",
     "armv7h": "ARM",
+    "i686": "Intel 80386",
 }
 ARCH_TOKEN_RE = re.compile(
-    r"(?:^|[^A-Za-z0-9])(armv7h|armv7|armhf|arm64|aarch64|x64|amd64|x86_64)(?:[^A-Za-z0-9]|$)",
+    r"(?:^|[^A-Za-z0-9])(armv7h|armv7|armhf|arm64|aarch64|x64|amd64|x86_64|i386|i686|ia32)(?:[^A-Za-z0-9]|$)",
     re.IGNORECASE,
 )
 ARCH_BY_TOKEN = {
@@ -504,6 +522,9 @@ ARCH_BY_TOKEN = {
     "x64": "x86_64",
     "amd64": "x86_64",
     "x86_64": "x86_64",
+    "i386": "i686",
+    "i686": "i686",
+    "ia32": "i686",
 }
 elf_library_dirs = sorted(
     {
@@ -521,6 +542,7 @@ for path in sorted(owned):
         with open(actual, "rb") as f:
             if f.read(4) != b"\x7fELF":
                 continue
+            elf_class = f.read(1)
     except OSError:
         continue
     token_matches = [
@@ -528,6 +550,8 @@ for path in sorted(owned):
         for m in ARCH_TOKEN_RE.finditer(path)
     ]
     expected_arch = token_matches[-1] if token_matches else ARCH
+    if expected_arch == "i686" and elf_class != b"\x01":
+        add_failure(f"elf-class:{path}:i686")
     expected_machine = MACHINE_BY_ARCH.get(expected_arch)
     if expected_machine:
         header = subprocess.run(
@@ -560,7 +584,9 @@ for path in sorted(owned):
     ).stdout
     if "NEEDED" in dynamic and expected_arch == ARCH:
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = ":".join(elf_library_dirs + [rooted("/usr/lib")])
+        env["LD_LIBRARY_PATH"] = ":".join(
+            elf_library_dirs + [rooted("/usr/lib32" if ARCH == "i686" else "/usr/lib")]
+        )
         ldd = subprocess.run(
             ["ldd", actual],
             capture_output=True,
@@ -569,6 +595,8 @@ for path in sorted(owned):
             env=env,
             check=False,
         )
+        if ARCH == "i686" and ldd.returncode != 0:
+            add_failure(f"elf-loader:{path}:{ldd.returncode}")
         for line in ldd.stdout.splitlines() + ldd.stderr.splitlines():
             if "=> not found" in line:
                 add_failure(f"elf-not-found:{path}:{line.strip()}")
@@ -639,6 +667,7 @@ for a in "${arches[@]}"; do
     x86_64) image=archlinux:base-devel; platform=linux/amd64 ;;
     aarch64) image=menci/archlinuxarm:base-devel; platform=linux/arm64 ;;
     armv7h) image=menci/archlinuxarm:base-devel; platform=linux/arm/v7 ;;
+    i686) image=archlinux:base-devel; platform=linux/amd64 ;;
   esac
   out="$scratch/$a"
   mkdir -p "$out"

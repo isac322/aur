@@ -43,6 +43,8 @@ class VerifyPackageGateTest(unittest.TestCase):
           -h)
             if [ "$name" = wrong-arch ]; then
               echo 'Machine: AArch64'
+            elif [ "$name" = valid-i686 ] || [ "$name" = ldd-error ]; then
+              echo 'Machine: Intel 80386'
             else
               echo 'Machine: Advanced Micro Devices X86-64'
             fi
@@ -52,7 +54,7 @@ class VerifyPackageGateTest(unittest.TestCase):
             ;;
           -d)
             case "$name" in
-              not-found|paseo-cli|native.node) echo 'Dynamic section'; echo 'NEEDED';;
+              not-found|paseo-cli|native.node|ldd-error) echo 'Dynamic section'; echo 'NEEDED';;
             esac
             ;;
           -Ws)
@@ -63,6 +65,7 @@ class VerifyPackageGateTest(unittest.TestCase):
         ldd = """#!/bin/sh
         case "$(basename "$1")" in
           not-found) echo 'libmissing.so.1 => not found' ;;
+          ldd-error) echo 'invalid ELF header' >&2; exit 1 ;;
         esac
         """
         self._write(root, "/fake-bin/ldd", textwrap.dedent(ldd), 0o755)
@@ -81,6 +84,7 @@ class VerifyPackageGateTest(unittest.TestCase):
         symlinks: dict[str, str] | None = None,
         fake_tools: bool = False,
         package_info: str = "",
+        arch: str = "x86_64",
     ) -> subprocess.CompletedProcess[str]:
         pre = root / "manifest-pre"
         post = root / "home/builder/work/src"
@@ -134,7 +138,7 @@ class VerifyPackageGateTest(unittest.TestCase):
             [
                 "python3",
                 str(gate),
-                "x86_64",
+                arch,
                 str(pre),
                 post_arg,
                 str(file_list),
@@ -326,6 +330,24 @@ class VerifyPackageGateTest(unittest.TestCase):
             self._write(root, virtual, b"\x7fELF\x02\x01\x01", 0o644)
             result = self._run_gate(root, [virtual], fake_tools=True)
             self._assert_pass(result)
+
+    def test_i686_rejects_wrong_elf_class_machine_and_unresolved_loader(self) -> None:
+        cases = (
+            ("valid-i686", b"\x01", None),
+            ("valid-i686", b"\x02", "elf-class"),
+            ("wrong-machine", b"\x01", "elf-arch"),
+            ("ldd-error", b"\x01", "elf-loader"),
+        )
+        for name, elf_class, reason in cases:
+            with self.subTest(name=name, elf_class=elf_class), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                virtual = f"/usr/lib/axiom/{name}"
+                self._write(root, virtual, b"\x7fELF" + elf_class + b"\x01\x01", 0o755)
+                result = self._run_gate(root, [virtual], fake_tools=True, arch="i686")
+                if reason is None:
+                    self._assert_pass(result)
+                else:
+                    self._assert_failure(result, reason)
 
     def test_missing_node_dependency_and_present_control(self) -> None:
         package_json = "/usr/lib/node_modules/@code-yeongyu/senpi/package.json"
