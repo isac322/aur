@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# verify-package.sh <pkgdir> [--arch x86_64|aarch64|all] [--smoke 'cmd ...']
+# verify-package.sh <pkgdir> [--arch x86_64|aarch64|armv7h|all] [--smoke 'cmd ...']
 #
 # Deterministic pre-push gate for one AUR package, run from the macOS host via
-# Docker Arch containers (x86_64: archlinux:base-devel, aarch64:
+# Docker Arch containers (x86_64: archlinux:base-devel, aarch64/armv7h:
 # menci/archlinuxarm:base-devel). Per arch it checks, in a clean container:
 #   - `makepkg --printsrcinfo` is byte-identical to the committed .SRCINFO
 #   - `makepkg -s -f` succeeds
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <pkgdir> [--arch x86_64|aarch64|all] [--smoke 'cmd ...']" >&2
+  echo "usage: $0 <pkgdir> [--arch x86_64|aarch64|armv7h|all] [--smoke 'cmd ...']" >&2
   exit 2
 }
 
@@ -35,7 +35,7 @@ while [ $# -gt 0 ]; do
     *) usage ;;
   esac
 done
-case $want_arch in x86_64|aarch64|all) ;; *) usage ;; esac
+case $want_arch in x86_64|aarch64|armv7h|all) ;; *) usage ;; esac
 
 pkgdir=$(cd "$pkgdir_arg" && pwd)
 [ -f "$pkgdir/PKGBUILD" ] || { echo "error: $pkgdir/PKGBUILD not found" >&2; exit 2; }
@@ -57,13 +57,26 @@ meta=$(cd "$pkgdir" && env -i PATH="$PATH" bash -c '
 pkgbase=$(printf '%s\n' "$meta" | sed -n 1p)
 declared=$(printf '%s\n' "$meta" | sed -n '2,$p')
 
+unsupported_arches=()
+while IFS= read -r a; do
+  [ -n "$a" ] || continue
+  case $a in
+    x86_64|aarch64|armv7h|any) ;;
+    *) unsupported_arches+=("$a") ;;
+  esac
+done <<< "$declared"
+
 arches=()
 if printf '%s\n' "$declared" | grep -qx any; then
   arches=(x86_64)
 else
-  for a in x86_64 aarch64; do
+  for a in x86_64 aarch64 armv7h; do
     if printf '%s\n' "$declared" | grep -qx "$a"; then arches+=("$a"); fi
   done
+fi
+if [ "$want_arch" = all ] && [ ${#unsupported_arches[@]} -gt 0 ]; then
+  echo "error: unsupported declared architecture(s): ${unsupported_arches[*]}; refusing --arch all before Docker" >&2
+  exit 2
 fi
 if [ "$want_arch" != all ]; then
   if printf '%s\n' "${arches[@]:-}" | grep -qx "$want_arch"; then
@@ -74,7 +87,7 @@ if [ "$want_arch" != all ]; then
   fi
 fi
 if [ ${#arches[@]} -eq 0 ]; then
-  echo "error: PKGBUILD arch=() declares neither x86_64, aarch64 nor any" >&2
+  echo "error: PKGBUILD arch=() declares neither x86_64, aarch64, armv7h nor any" >&2
   exit 2
 fi
 
@@ -476,12 +489,16 @@ for path in sorted(owned):
 MACHINE_BY_ARCH = {
     "x86_64": "Advanced Micro Devices X86-64",
     "aarch64": "AArch64",
+    "armv7h": "ARM",
 }
 ARCH_TOKEN_RE = re.compile(
-    r"(?:^|[^A-Za-z0-9])(arm64|aarch64|x64|amd64|x86_64)(?:[^A-Za-z0-9]|$)",
+    r"(?:^|[^A-Za-z0-9])(armv7h|armv7|armhf|arm64|aarch64|x64|amd64|x86_64)(?:[^A-Za-z0-9]|$)",
     re.IGNORECASE,
 )
 ARCH_BY_TOKEN = {
+    "armv7h": "armv7h",
+    "armv7": "armv7h",
+    "armhf": "armv7h",
     "arm64": "aarch64",
     "aarch64": "aarch64",
     "x64": "x86_64",
@@ -621,6 +638,7 @@ for a in "${arches[@]}"; do
   case $a in
     x86_64) image=archlinux:base-devel; platform=linux/amd64 ;;
     aarch64) image=menci/archlinuxarm:base-devel; platform=linux/arm64 ;;
+    armv7h) image=menci/archlinuxarm:base-devel; platform=linux/arm/v7 ;;
   esac
   out="$scratch/$a"
   mkdir -p "$out"

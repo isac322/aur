@@ -158,6 +158,33 @@ class VerifyPackageGateTest(unittest.TestCase):
         result = subprocess.run(["bash", "-n", str(VERIFY_SH)], text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_all_rejects_unsupported_declared_architecture_before_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "fixture"
+            package.mkdir()
+            (package / "PKGBUILD").write_text(
+                "pkgname=fixture\npkgver=1\npkgrel=1\narch=(x86_64 riscv64)\n",
+                encoding="utf-8",
+            )
+            docker = root / "docker"
+            marker = root / "docker-ran"
+            docker.write_text('#!/bin/sh\n: > "$DOCKER_MARKER"\nexit 99\n', encoding="utf-8")
+            docker.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{root}:{env.get('PATH', '')}"
+            env["DOCKER_MARKER"] = str(marker)
+            result = subprocess.run(
+                ["bash", str(VERIFY_SH), str(package), "--arch", "all"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2, result.stdout)
+            self.assertFalse(marker.exists(), "unsupported architecture must fail before Docker starts")
+
     def test_prepare_removed_linux_resource_fails_without_file(self) -> None:
         pre = {"electron-builder.config.cjs": "extraResources: [{ to: 'bin/orca-wayland-clipboard' }]\n"}
         post = {"electron-builder.config.cjs": "extraResources: []\n"}
