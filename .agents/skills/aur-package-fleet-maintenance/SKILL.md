@@ -91,9 +91,9 @@ VCS package는 target branch/ref, 원격 HEAD와 실제 `pkgver()`를 비교한�
 1. AUR sync 후 `check.py audit --json` 결과를 기준으로 공식 최신판을 최초 판정한다.
 2. 실제 편집 직전에 `check.py audit --json --only <pkgbase>`로 같은 공식 채널을 재조회한다. 새 release/ref면 기존 계획과 checksum을 폐기하고 영향 감사부터 반복한다.
 3. commit/push 직전에 같은 `--only <pkgbase>` 감사를 마지막으로 실행한다. 새 release/ref면 오래된 변경을 push하지 않고 영향 감사부터 반복한다.
-4. 이전 실행의 `validation_failed`·`blocked`는 동일한 upstream version/ref, packaging, environment 조합에 대한 evidence일 뿐이며 다른 입력의 hold verdict로 상속하지 않는다. version/ref/packaging/environment 중 하나라도 바뀌었거나, 이전 시도 후 PKGBUILD가 원복되어 아직 새 버전으로 커밋되지 않은 `outdated` 상태라면 "동일한 전체 입력"이 아니므로 이전 실패 기록이나 세션 히스토리를 이유로 Step 3~5를 건너뛰지 않는다.
-5. 빌드 시스템 전환, 의존성·컴파일러·LTO 플래그 변경, `prepare()` 패치·검증 훅 불일치, 산출물·아이콘 경로 변경, `scripts/verify-package.sh`의 의존성 해석 결함처럼 로컬 PKGBUILD나 검증 스크립트를 수정해 해결할 수 있는 실패는 보류 사유가 아니라 이번 실행에서 고쳐야 할 작업 대상이다.
-6. 오직 upstream 자산 누락이나 upstream 자체 결함처럼 로컬 패키징·검증 스크립트 수정만으로 해결할 수 없음이 확인된 외부 차단 요인에 한해, 동일한 전체 입력일 때 이전 실패를 historical evidence로 재사용할 수 있으며(원래 version/ref/environment, timestamp, `not rerun this invocation` 명시), 이번 실행의 failure로 주장하지 않는다. 이번 invocation에서 정확히 commit할 파일 상태로 모든 선언 architecture의 `VERIFY ... PASS`가 없으면 push하지 않는다.
+4. 이전 실행의 `validation_failed`·`blocked`는 동일한 전체 입력 — ① upstream target version/peeled commit ref, ② 로컬 `HEAD`의 `<pkg>/` 트리와 `scripts/verify-package.sh` 커밋 상태, ③ 차단 원인이었던 외부 Arch/AUR provider 버전(가벼운 저장소·RPC 메타데이터 조회로 확인) 또는 upstream 자산 URL 응답 상태(`HEAD` 요청) — 에 대한 evidence다. 이 중 하나라도 바뀌었거나 아래 6번의 외부 차단 요건에 해당하지 않으면, 이전 실패 기록이나 세션 히스토리를 이유로 Step 3~5를 건너뛰지 않는다.
+5. 빌드 시스템 전환, 의존성·컴파일러·LTO 플래그 변경, `prepare()` 패치·검증 훅 불일치, 산출물·아이콘 경로 변경, 일시적 네트워크·미러·RPC 오류나 `scripts/verify-package.sh`의 의존성 해석 결함처럼 로컬 PKGBUILD나 검증 스크립트를 수정해 해결할 수 있는 실패는 보류 사유가 아니라 이번 실행에서 고쳐야 할 작업 대상이다. 특히 `aur-dependency:*` 단독 실패는 공식 Arch 저장소와 AUR 양쪽 모두에 해당 provider가 실재하지 않음을 메타데이터 조회로 별도 확인하기 전까지 외부 차단으로 보류하지 않는다.
+6. 오직 upstream 자산 누락, upstream 자체 런타임 결함, 또는 upstream 요구 버전 범위와 현재 공식 Arch/AUR provider 버전의 비호환처럼 로컬 패키징·검증 스크립트 수정만으로 해결할 수 없음이 확인된 외부 차단 요인에 한해, 후보 PKGBUILD를 원복해 두었더라도 위 4번의 전체 입력이 그대로임을 가벼운 메타데이터·버전·`HEAD` 조회만으로 확인했다면 Docker 재빌드(Step 4~5)를 다시 실행하지 않고 이전 실패를 historical evidence로 재사용한다(원래 `version/ref`/차단 provider 버전·자산 상태, timestamp, `not rerun this invocation` 명시; 이번 실행의 신규 failure로 주장하지 않는다). 이번 invocation에서 정확히 commit할 파일 상태로 선언된 architecture 검증 gate(`VERIFY ... PASS`)가 없으면 push하지 않는다.
 
 checksum 성공만으로 payload 버전을 증명하지 않는다. archive root, package metadata, source manifest나 binary `--version`으로 최종 `pkgver`와 일치함을 확인한다.
 감사 전용 요청이면 Step 3까지 수행하고 `AGENTS.md`의 그룹별 변경 전 보고 형식으로 보고한 뒤 멈춘다.
@@ -157,7 +157,7 @@ checksum·pin 변경은 배열·변수 이름 기준으로 전체를 교체한�
 dependency, compiler, toolchain, Meson/CMake나 `PKG_CONFIG_PATH` 등 환경을 바꿨다면 새 checkout, cleanbuild, `setup --wipe` 등 clean state에서 재검증한다.
 일부 dependency archive만 푼 partial root에 전역 `PKG_CONFIG_SYSROOT_DIR`를 설정하지 않는다.
 
-검증 환경은 다음 순서로 선택한다. 이 macOS host에서는 `scripts/verify-package.sh <pkgdir>`(x86_64·aarch64 Docker Arch container)가 1~2를 충족하는 표준 환경이다.
+검증 환경은 다음 순서로 선택한다. 이 macOS host에서는 `scripts/verify-package.sh <pkgdir>`(`x86_64`·`aarch64`·`armv7h`·`i686` Docker Arch container; `arch=('any')`는 호스트 네이티브 arch 우선 실행 후 Arch Linux ARM 미제공 공식 의존성 누락 시 `x86_64` 자동 fallback, 호스트 공유 패키지·AUR 의존성 캐시 재사용)가 1~2를 충족하는 표준 환경이다.
 `check.py audit`은 upstream 최신판 판정 도구일 뿐 검증이 아니며, `current` 결과를 validation 근거로 쓰지 않는다.
 
 1. Arch clean chroot/devtools
@@ -172,7 +172,7 @@ Python은 archive 안 `site-packages`를 `PYTHONPATH`에 넣고 entry point를 �
 
 아래 배포 gate를 통과한 package는 수정·버전업 승인 범위 안에서 별도 commit/push 요청을 기다리지 않고 모두 배포한다. 사용자가 같은 요청에서 commit이나 push를 명시적으로 금지한 package만 제외한다.
 
-배포 gate: 이번 실행에서 commit할 바로 그 파일 상태로 `scripts/verify-package.sh <pkgdir>`가 선언된 모든 arch에 `VERIFY <pkgbase> <arch> PASS`를 출력한 package만 commit·push한다. 그 줄을 tally 근거로 그대로 인용한다.
+배포 gate: 이번 실행에서 commit할 바로 그 파일 상태로 `scripts/verify-package.sh <pkgdir>`가 선언된 모든 arch에 `VERIFY <pkgbase> <arch> PASS`를 출력한 package만 commit·push한다(`arch=('any')`는 실행된 호스트 네이티브 arch 또는 `x86_64` fallback의 `VERIFY <pkgbase> <arch> PASS` 1건으로 충족하며, fallback 발생 시 직전 `VERIFY <pkgbase> aarch64 SKIP ...` 줄을 함께 인용한다). 그 줄을 tally 근거로 그대로 인용한다.
 gate 이후 파일이 바뀌면 다시 실행한다. validation이 `partial`·`blocked`이면 push하지 않고 `validation_blocked`, `failed`이면 `validation_failed`로 기록한다.
 
 1. 모노레포 루트에서 패키지 파일만 독립 커밋한다: `git add <pkg>/PKGBUILD <pkg>/.SRCINFO && git commit -m "..."`

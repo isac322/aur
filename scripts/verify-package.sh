@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-package.sh <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...']
+# verify-package.sh <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...'] [--no-cache]
 #
 # Deterministic pre-push gate for one AUR package, run from the macOS host via
 # Docker Arch containers (x86_64: archlinux:base-devel, aarch64/armv7h:
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...']" >&2
+  echo "usage: $0 <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...'] [--no-cache]" >&2
   exit 2
 }
 
@@ -31,10 +31,13 @@ pkgdir_arg=$1
 shift
 want_arch=all
 smoke=${VERIFY_SMOKE:-}
+use_cache=1
+[ "${VERIFY_PACKAGE_NO_CACHE:-0}" = 1 ] && use_cache=0
 while [ $# -gt 0 ]; do
   case $1 in
     --arch) [ $# -ge 2 ] || usage; want_arch=$2; shift 2 ;;
     --smoke) [ $# -ge 2 ] || usage; smoke=$2; shift 2 ;;
+    --no-cache) use_cache=0; shift ;;
     *) usage ;;
   esac
 done
@@ -69,29 +72,52 @@ while IFS= read -r a; do
   esac
 done <<< "$declared"
 
+host_arch=${VERIFY_HOST_ARCH:-$(uname -m)}
+is_any=0
+any_fallback_x86=0
 arches=()
-if printf '%s\n' "$declared" | grep -qx any; then
-  arches=(x86_64)
-else
-  for a in x86_64 aarch64 armv7h i686; do
-    if printf '%s\n' "$declared" | grep -qx "$a"; then arches+=("$a"); fi
-  done
-fi
 if [ "$want_arch" = all ] && [ ${#unsupported_arches[@]} -gt 0 ]; then
   echo "error: unsupported declared architecture(s): ${unsupported_arches[*]}; refusing --arch all before Docker" >&2
   exit 2
 fi
-if [ "$want_arch" != all ]; then
-  if printf '%s\n' "${arches[@]:-}" | grep -qx "$want_arch"; then
-    arches=("$want_arch")
+if printf '%s\n' "$declared" | grep -qx any; then
+  is_any=1
+  if [ "$want_arch" = all ]; then
+    case $host_arch in
+      arm64|aarch64)
+        arches=(aarch64)
+        any_fallback_x86=1
+        ;;
+      *)
+        arches=(x86_64)
+        ;;
+    esac
   else
-    echo "error: arch $want_arch not declared in PKGBUILD arch=($declared)" >&2
-    exit 2
+    arches=("$want_arch")
+  fi
+else
+  for a in x86_64 aarch64 armv7h i686; do
+    if printf '%s\n' "$declared" | grep -qx "$a"; then arches+=("$a"); fi
+  done
+  if [ "$want_arch" != all ]; then
+    if printf '%s\n' "${arches[@]:-}" | grep -qx "$want_arch"; then
+      arches=("$want_arch")
+    else
+      echo "error: arch $want_arch not declared in PKGBUILD arch=($declared)" >&2
+      exit 2
+    fi
   fi
 fi
 if [ ${#arches[@]} -eq 0 ]; then
   echo "error: PKGBUILD arch=() declares neither x86_64, aarch64, armv7h, i686 nor any" >&2
   exit 2
+fi
+
+cache_root=""
+if [ "$use_cache" -eq 1 ]; then
+  cache_root=${VERIFY_PACKAGE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/aur-verify-package}
+  mkdir -p "$cache_root"
+  cache_root=$(cd "$cache_root" && pwd)
 fi
 
 scratch=$(mktemp -d)
@@ -102,15 +128,54 @@ read -r -d '' INNER <<'EOF' || true
 set -euo pipefail
 fail() { echo "$1" > /out/reason; echo "FAIL: $1" >&2; exit 1; }
 
+cache_enabled=0
+if [ -d /cache/pacman ] && [ -d /cache/aur-pkgs ]; then
+  cache_enabled=1
+fi
+sync_pacman_cache() {
+  [ "$cache_enabled" -eq 1 ] || return 0
+  local f base tmp
+  shopt -s nullglob
+  for f in /var/cache/pacman/pkg/*.pkg.tar.*; do
+    case $f in
+      *.part|*.sig) continue ;;
+    esac
+    base=$(basename "$f")
+    if [ ! -e "/cache/pacman/$base" ]; then
+      tmp="/cache/pacman/.tmp.$$.$RANDOM.$base"
+      if cp -f "$f" "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "/cache/pacman/$base" 2>/dev/null || rm -f "$tmp"
+      else
+        rm -f "$tmp"
+      fi
+    fi
+    if [ -f "$f.sig" ] && [ ! -e "/cache/pacman/$base.sig" ]; then
+      tmp="/cache/pacman/.tmp.$$.$RANDOM.$base.sig"
+      if cp -f "$f.sig" "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "/cache/pacman/$base.sig" 2>/dev/null || rm -f "$tmp"
+      else
+        rm -f "$tmp"
+      fi
+    fi
+  done
+}
+trap 'rc=$?; sync_pacman_cache || true; exit "$rc"' EXIT
+
 sed -i 's/^DownloadUser/#DownloadUser/' /etc/pacman.conf
 grep -q '^DisableSandbox' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+if [ "$cache_enabled" -eq 1 ]; then
+  sed -i '/^#*CacheDir[[:space:]]*=/d' /etc/pacman.conf
+  sed -i '/^\[options\]/a CacheDir = /var/cache/pacman/pkg/\nCacheDir = /cache/pacman/' /etc/pacman.conf
+fi
 pacman -Syu --noconfirm --needed namcap jq >/dev/null || fail pacman-setup
+sync_pacman_cache
 
 target_env=()
 install_options=(--noconfirm)
 if [ "$ARCH" = i686 ]; then
   printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
   pacman -Syu --noconfirm --needed gcc-multilib lib32-glibc lib32-gcc-libs >/dev/null || fail multilib-setup
+  sync_pacman_cache
   sed -i \
     -e 's/^CARCH=.*/CARCH="i686"/' \
     -e 's/^CHOST=.*/CHOST="i686-pc-linux-gnu"/' \
@@ -144,12 +209,56 @@ fi
 
 # Dependencies missing from the container's repos (e.g. electron on Arch Linux
 # ARM) are built from their AUR provider, as an AUR helper would do.
+resolve_installed_dep_versions() {
+  pacman -Qi 2>/dev/null | awk '
+    /^Name[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); name=$0 }
+    /^Version[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); ver=$0; print name "\t" name "=" ver }
+    /^Provides[[:space:]]*:/ {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      if ($0 != "None") {
+        n = split($0, arr, /[[:space:]]+/)
+        for (i = 1; i <= n; i++) {
+          p = arr[i]
+          sub(/[<>=].*/, "", p)
+          if (p != "") print p "\t" name "=" ver
+        }
+      }
+    }
+  ' | LC_ALL=C sort -u
+}
+
+aur_dep_cache_key() {
+  local pkg_path=$1
+  shift
+  local sub_deps=("$@")
+  local map_file
+  map_file=$(mktemp)
+  resolve_installed_dep_versions > "$map_file"
+  {
+    printf 'arch=%s\n' "$ARCH"
+    grep -E '^(CARCH|CHOST|CFLAGS|CXXFLAGS|LDFLAGS)=' /etc/makepkg.conf 2>/dev/null || true
+    (
+      cd "$pkg_path"
+      while IFS= read -r -d '' rel; do
+        printf 'file=%s mode=%s sha=%s\n' "$rel" "$(stat -c '%a' "$rel" 2>/dev/null || stat -f '%Lp' "$rel")" "$(sha256sum "$rel" | awk '{print $1}')"
+      done < <(find . -mindepth 1 \( -path './.git' -o -path './src' -o -path './pkg' \) -prune -o -type f -print0 | LC_ALL=C sort -z)
+    )
+    for d in "${sub_deps[@]}"; do
+      [ -n "$d" ] || continue
+      awk -F '\t' -v k="$d" '$1 == k { print "dep=" k "->" $2 }' "$map_file"
+    done
+  } | sha256sum | awk '{print $1}'
+  rm -f "$map_file"
+}
+
 aur_dep() {
-  local dep=$1 name dir sub
+  local dep=$1 name dir sub cacheable=0 dep_key="" cache_entry="" pkg_stage="" tmp_entry=""
+  local -a sub_deps=() built_deps=() cached_pkgs=()
   dep=${dep%%[<>=]*}
   pacman -T "$dep" >/dev/null && return 0
   if pacman -Sp "$dep" >/dev/null 2>&1; then
     pacman -S --noconfirm --needed "$dep" >/dev/null || return 1
+    sync_pacman_cache
     return 0
   fi
   dir=$(sudo -u builder mktemp -d)
@@ -168,12 +277,50 @@ aur_dep() {
     echo "== AUR dependency $dep -> $name"
     sudo -u builder git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 clone -q --depth 1 "https://aur.archlinux.org/$name.git" "$dir/$name" || return 1
   fi
-  while IFS= read -r sub; do
+  mapfile -t sub_deps < <(
+    cd "$dir/$name" &&
+      sudo -u builder makepkg --printsrcinfo |
+      sed -nE "s/^\t(make|check)?depends(_$ARCH)? = ([^<>=]+).*/\3/p" |
+      LC_ALL=C sort -u
+  )
+  for sub in "${sub_deps[@]}"; do
+    [ -n "$sub" ] || continue
     aur_dep "$sub" || return 1
-  done < <(cd "$dir/$name" && sudo -u builder makepkg --printsrcinfo | sed -nE "s/^\t(make|check)?depends(_$ARCH)? = ([^<>=]+).*/\3/p" | sort -u)
-  (cd "$dir/$name" && sudo -u builder -H makepkg -si -A --noconfirm --needed)
+  done
+  if [ "$cache_enabled" -eq 1 ] &&
+     ! grep -Eq '^[[:space:]]*pkgver[[:space:]]*\(\)|'\''SKIP'\''|"SKIP"' "$dir/$name/PKGBUILD"; then
+    cacheable=1
+    dep_key=$(aur_dep_cache_key "$dir/$name" "${sub_deps[@]}")
+    cache_entry="/cache/aur-pkgs/$dep_key"
+    shopt -s nullglob
+    cached_pkgs=("$cache_entry"/*.pkg.tar.*)
+    if [ -f "$cache_entry/.done" ] && [ ${#cached_pkgs[@]} -gt 0 ]; then
+      echo "== AUR dependency $dep -> $name (cached)"
+      touch "$cache_entry" 2>/dev/null || true
+      pacman -U "${install_options[@]}" --needed "${cached_pkgs[@]}" || return 1
+      rm -rf "$dir"
+      return 0
+    fi
+  fi
+  pkg_stage=$(sudo -u builder mktemp -d)
+  (cd "$dir/$name" && sudo -u builder -H env PKGDEST="$pkg_stage" "${target_env[@]}" makepkg -s -f -A --noconfirm) || return 1
+  sync_pacman_cache
+  shopt -s nullglob
+  built_deps=("$pkg_stage"/*.pkg.tar.*)
+  [ ${#built_deps[@]} -gt 0 ] || return 1
+  pacman -U "${install_options[@]}" --needed "${built_deps[@]}" || return 1
+  if [ "$cacheable" -eq 1 ]; then
+    tmp_entry=$(mktemp -d /cache/aur-pkgs/.tmp.XXXXXX)
+    cp -f "${built_deps[@]}" "$tmp_entry/"
+    touch "$tmp_entry/.done"
+    if ! mv -T "$tmp_entry" "$cache_entry" 2>/dev/null; then
+      rm -rf "$tmp_entry"
+    fi
+  fi
+  rm -rf "$pkg_stage" "$dir"
 }
 pacman -S --noconfirm --needed git >/dev/null || fail pacman-setup
+sync_pacman_cache
 while IFS= read -r dep; do
   aur_dep "$dep" || fail "aur-dependency:$dep"
 done < <(sed -nE "s/^\t(make|check)?depends(_$ARCH)? = ([^<>=]+).*/\3/p" /tmp/srcinfo.gen | sort -u)
@@ -195,6 +342,7 @@ chown -R builder:builder "$work/.verify-manifest-pre"
 
 echo "== makepkg -s -f"
 asb makepkg -s -f --noconfirm || fail build
+sync_pacman_cache
 
 shopt -s nullglob
 pkgs=(/home/builder/pkgout/*.pkg.tar.*)
@@ -660,9 +808,11 @@ fi
 echo ok > /out/reason
 EOF
 
-results=()
-failed=0
-for a in "${arches[@]}"; do
+reporoot=$(cd "$pkgdir" && git rev-parse --show-toplevel 2>/dev/null || dirname "$pkgdir")
+
+run_arch_container() {
+  local a=$1 image platform out cache_arch
+  local -a cmd
   case $a in
     x86_64) image=archlinux:base-devel; platform=linux/amd64 ;;
     aarch64) image=menci/archlinuxarm:base-devel; platform=linux/arm64 ;;
@@ -670,19 +820,47 @@ for a in "${arches[@]}"; do
     i686) image=archlinux:base-devel; platform=linux/amd64 ;;
   esac
   out="$scratch/$a"
+  rm -rf "$out"
   mkdir -p "$out"
-  reporoot=$(cd "$pkgdir" && git rev-parse --show-toplevel 2>/dev/null || dirname "$pkgdir")
-  cmd=(docker run --rm --platform "$platform"
-    -v "$pkgdir:/in:ro" -v "$reporoot:/repo:ro" -v "$out:/out"
-    -e "ARCH=$a" -e "SMOKE=$smoke"
-    "$image" bash -c "$INNER")
+  cmd=(docker run --rm --init --platform "$platform"
+    -v "$pkgdir:/in:ro" -v "$reporoot:/repo:ro" -v "$out:/out")
+  if [ "$use_cache" -eq 1 ] && [ -n "$cache_root" ]; then
+    cache_arch="$cache_root/$a"
+    mkdir -p "$cache_arch/pacman" "$cache_arch/aur-pkgs"
+    find "$cache_arch/pacman" -maxdepth 1 -name '.tmp.*' -mmin +120 -delete 2>/dev/null || true
+    find "$cache_arch/aur-pkgs" -mindepth 1 -maxdepth 1 -name '.tmp.*' -mmin +120 -exec rm -rf {} + 2>/dev/null || true
+    find "$cache_arch/pacman" -maxdepth 1 -type f -mtime +30 -delete 2>/dev/null || true
+    find "$cache_arch/aur-pkgs" -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + 2>/dev/null || true
+    cmd+=(-v "$cache_arch:/cache")
+  fi
+  cmd+=(-e "ARCH=$a" -e "SMOKE=$smoke" "$image" bash -c "$INNER")
   echo "==== $pkgbase $a ($image)"
   if "${cmd[@]}"; then
-    results+=("VERIFY $pkgbase $a PASS ok")
+    run_reason=ok
+    return 0
   else
-    reason=container-error
-    [ -s "$out/reason" ] && reason=$(cat "$out/reason")
-    results+=("VERIFY $pkgbase $a FAIL $reason")
+    run_reason=container-error
+    [ -s "$out/reason" ] && run_reason=$(cat "$out/reason")
+    return 1
+  fi
+}
+
+results=()
+failed=0
+for a in "${arches[@]}"; do
+  run_reason=""
+  if run_arch_container "$a"; then
+    results+=("VERIFY $pkgbase $a PASS ok")
+  elif [ "$is_any" -eq 1 ] && [ "$any_fallback_x86" -eq 1 ] && [ "$a" = aarch64 ] && [[ $run_reason == aur-dependency:* ]]; then
+    results+=("VERIFY $pkgbase aarch64 SKIP $run_reason (fallback x86_64)")
+    if run_arch_container x86_64; then
+      results+=("VERIFY $pkgbase x86_64 PASS ok")
+    else
+      results+=("VERIFY $pkgbase x86_64 FAIL $run_reason")
+      failed=1
+    fi
+  else
+    results+=("VERIFY $pkgbase $a FAIL $run_reason")
     failed=1
   fi
 done

@@ -400,5 +400,406 @@ class VerifyPackageGateTest(unittest.TestCase):
             self._assert_pass(result)
 
 
+class VerifyPackageDriverTest(unittest.TestCase):
+    def _make_pkg(self, root: Path, arch_decl: str = "('any')") -> Path:
+        pkg = root / "demo"
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "PKGBUILD").write_text(
+            textwrap.dedent(
+                f"""\
+                pkgname=demo
+                pkgver=1.0.0
+                pkgrel=1
+                pkgdesc='Demo package'
+                arch={arch_decl}
+                url='https://example.com'
+                license=('MIT')
+                package() {{ :; }}
+                """
+            ),
+            encoding="utf-8",
+        )
+        return pkg
+
+    def _make_fake_docker(self, root: Path, behavior_body: str) -> tuple[Path, Path]:
+        bindir = root / "bin"
+        bindir.mkdir(parents=True, exist_ok=True)
+        calls_log = root / "docker-calls.log"
+        docker = bindir / "docker"
+        docker.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, pathlib, sys\n"
+            f"log = pathlib.Path({str(calls_log)!r})\n"
+            "args = sys.argv[1:]\n"
+            "arch = ''\n"
+            "out_dir = ''\n"
+            "cache_dir = ''\n"
+            "for i, a in enumerate(args):\n"
+            "    if a == '-e' and i + 1 < len(args) and args[i + 1].startswith('ARCH='):\n"
+            "        arch = args[i + 1].split('=', 1)[1]\n"
+            "    if a == '-v' and i + 1 < len(args):\n"
+            "        src, dst = args[i + 1].split(':', 1)\n"
+            "        if dst == '/out': out_dir = src\n"
+            "        if dst == '/cache': cache_dir = src\n"
+            "with log.open('a', encoding='utf-8') as f:\n"
+            "    f.write(json.dumps({'arch': arch, 'cache': cache_dir, 'args': args}) + '\\n')\n"
+            + behavior_body,
+            encoding="utf-8",
+        )
+        docker.chmod(0o755)
+        return bindir, calls_log
+
+    def test_inner_container_script_is_valid_bash_and_orders_cachedir(self) -> None:
+        script = VERIFY_SH.read_text(encoding="utf-8")
+        marker = "read -r -d '' INNER <<'EOF' || true\n"
+        start = script.index(marker) + len(marker)
+        end = script.index("\nEOF\n", start)
+        inner = script[start:end]
+        result = subprocess.run(
+            ["bash", "-n"],
+            input=inner,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            r"CacheDir = /var/cache/pacman/pkg/\nCacheDir = /cache/pacman/",
+            inner,
+        )
+        self.assertIn('mv -T "$tmp_entry" "$cache_entry"', inner)
+
+    def test_any_arch_host_selection_and_explicit_arch_override(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pkg = self._make_pkg(root, "('any')")
+            bindir, calls_log = self._make_fake_docker(
+                root,
+                "pathlib.Path(out_dir, 'reason').write_text('ok\\n')\nsys.exit(0)\n",
+            )
+            cache_dir = root / "cache"
+            base_env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ.get('PATH', '')}",
+                "VERIFY_PACKAGE_CACHE_DIR": str(cache_dir),
+            }
+
+            for host_arch, expected_arch in (("arm64", "aarch64"), ("x86_64", "x86_64")):
+                calls_log.unlink(missing_ok=True)
+                res = subprocess.run(
+                    ["bash", str(VERIFY_SH), str(pkg)],
+                    env={**base_env, "VERIFY_HOST_ARCH": host_arch},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+                self.assertIn(f"VERIFY demo {expected_arch} PASS ok", res.stdout)
+                calls = [json.loads(line) for line in calls_log.read_text().splitlines()]
+                self.assertEqual([c["arch"] for c in calls], [expected_arch])
+
+            for explicit in ("x86_64", "aarch64"):
+                calls_log.unlink(missing_ok=True)
+                res = subprocess.run(
+                    ["bash", str(VERIFY_SH), str(pkg), "--arch", explicit],
+                    env={**base_env, "VERIFY_HOST_ARCH": "arm64"},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+                self.assertIn(f"VERIFY demo {explicit} PASS ok", res.stdout)
+
+    def test_any_arch_fallback_only_on_aur_dependency_failure(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pkg = self._make_pkg(root, "('any')")
+            bindir, calls_log = self._make_fake_docker(
+                root,
+                "mode = os.environ['FAKE_MODE']\n"
+                "if mode == 'fallback_ok' and arch == 'aarch64':\n"
+                "    pathlib.Path(out_dir, 'reason').write_text('aur-dependency:only-x86\\n')\n"
+                "    sys.exit(1)\n"
+                "if mode == 'fallback_ok' and arch == 'x86_64':\n"
+                "    pathlib.Path(out_dir, 'reason').write_text('ok\\n')\n"
+                "    sys.exit(0)\n"
+                "if mode == 'build_fail':\n"
+                "    pathlib.Path(out_dir, 'reason').write_text('build\\n')\n"
+                "    sys.exit(1)\n"
+                "pathlib.Path(out_dir, 'reason').write_text('aur-dependency:missing-everywhere\\n')\n"
+                "sys.exit(1)\n",
+            )
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ.get('PATH', '')}",
+                "VERIFY_HOST_ARCH": "arm64",
+                "VERIFY_PACKAGE_NO_CACHE": "1",
+            }
+
+            res = subprocess.run(
+                ["bash", str(VERIFY_SH), str(pkg)],
+                env={**env, "FAKE_MODE": "fallback_ok"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            self.assertIn("VERIFY demo aarch64 SKIP aur-dependency:only-x86 (fallback x86_64)", res.stdout)
+            self.assertIn("VERIFY demo x86_64 PASS ok", res.stdout)
+            self.assertNotIn("FAIL", res.stdout)
+
+            calls_log.unlink(missing_ok=True)
+            res_build = subprocess.run(
+                ["bash", str(VERIFY_SH), str(pkg)],
+                env={**env, "FAKE_MODE": "build_fail"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(res_build.returncode, 1)
+            calls = [json.loads(line) for line in calls_log.read_text().splitlines()]
+            self.assertEqual([c["arch"] for c in calls], ["aarch64"])
+            self.assertIn("VERIFY demo aarch64 FAIL build", res_build.stdout)
+
+            res_both = subprocess.run(
+                ["bash", str(VERIFY_SH), str(pkg)],
+                env={**env, "FAKE_MODE": "both_fail"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(res_both.returncode, 1)
+            self.assertIn("VERIFY demo x86_64 FAIL aur-dependency:missing-everywhere", res_both.stdout)
+
+    def test_cache_mount_isolation_and_no_cache_controls(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pkg = self._make_pkg(root, "('x86_64' 'i686')")
+            bindir, calls_log = self._make_fake_docker(
+                root,
+                "pathlib.Path(out_dir, 'reason').write_text('ok\\n')\nsys.exit(0)\n",
+            )
+            cache_dir = root / "shared-cache"
+            env = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ.get('PATH', '')}",
+                "VERIFY_PACKAGE_CACHE_DIR": str(cache_dir),
+            }
+            res = subprocess.run(
+                ["bash", str(VERIFY_SH), str(pkg)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            calls = [json.loads(line) for line in calls_log.read_text().splitlines()]
+            self.assertEqual([c["arch"] for c in calls], ["x86_64", "i686"])
+            self.assertTrue(calls[0]["cache"].endswith("/shared-cache/x86_64"))
+            self.assertTrue(calls[1]["cache"].endswith("/shared-cache/i686"))
+            self.assertTrue((cache_dir / "x86_64" / "pacman").is_dir())
+            self.assertTrue((cache_dir / "i686" / "aur-pkgs").is_dir())
+
+            calls_log.unlink(missing_ok=True)
+            res_nc = subprocess.run(
+                ["bash", str(VERIFY_SH), str(pkg), "--no-cache"],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(res_nc.returncode, 0)
+            nc_calls = [json.loads(line) for line in calls_log.read_text().splitlines()]
+            self.assertEqual([c["cache"] for c in nc_calls], ["", ""])
+
+    def test_sync_pacman_cache_aur_dep_key_and_pruning_behaviors(self) -> None:
+        import time
+
+        script = VERIFY_SH.read_text(encoding="utf-8")
+        marker = "read -r -d '' INNER <<'EOF' || true\n"
+        start = script.index(marker) + len(marker)
+        end = script.index("\nEOF\n", start)
+        inner = script[start:end]
+
+        sync_fn = inner[
+            inner.index("sync_pacman_cache() {\n") : inner.index("\ntrap 'rc=$?; sync_pacman_cache")
+        ]
+        key_fns = inner[
+            inner.index("resolve_installed_dep_versions() {\n") : inner.index("\naur_dep() {\n")
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src_pkg = root / "pacman-pkg"
+            dst_pkg = root / "cache-pacman"
+            src_pkg.mkdir()
+            dst_pkg.mkdir()
+            (src_pkg / "foo-1.0-1-aarch64.pkg.tar.xz").write_bytes(b"pkgdata")
+            (src_pkg / "foo-1.0-1-aarch64.pkg.tar.xz.sig").write_bytes(b"sigdata")
+            (src_pkg / "bar-1.0-1-aarch64.pkg.tar.xz.part").write_bytes(b"partial")
+            (src_pkg / "orphan-1.0-1-aarch64.pkg.tar.xz.sig").write_bytes(b"orphansig")
+
+            adapted_sync = sync_fn.replace("/var/cache/pacman/pkg", str(src_pkg)).replace(
+                "/cache/pacman", str(dst_pkg)
+            )
+            res = subprocess.run(
+                ["bash", "-c", f"set -euo pipefail\ncache_enabled=1\n{adapted_sync}\nsync_pacman_cache"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(
+                sorted(p.name for p in dst_pkg.iterdir()),
+                ["foo-1.0-1-aarch64.pkg.tar.xz", "foo-1.0-1-aarch64.pkg.tar.xz.sig"],
+            )
+
+            fake_bin = root / "fake-pacman"
+            fake_bin.mkdir()
+            pacman_stub = fake_bin / "pacman"
+            qi_file = root / "pacman-qi.txt"
+            qi_file.write_text(
+                "Name            : bash\n"
+                "Version         : 5.3.0-1\n"
+                "Provides        : sh\n\n"
+                "Name            : python\n"
+                "Version         : 3.14.1-1\n"
+                "Provides        : None\n",
+                encoding="utf-8",
+            )
+            pacman_stub.write_text(
+                f"#!/bin/sh\ncat {str(qi_file)!r}\n",
+                encoding="utf-8",
+            )
+            pacman_stub.chmod(0o755)
+
+            dep_dir = root / "aur-dep"
+            dep_dir.mkdir()
+            (dep_dir / "PKGBUILD").write_text("pkgname=dep\npkgver=1.0\n", encoding="utf-8")
+
+            resolved_map = subprocess.run(
+                ["bash", "-c", f"set -euo pipefail\n{key_fns}\nresolve_installed_dep_versions"],
+                env={**os.environ, "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}"},
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout
+            self.assertIn("sh\tbash=5.3.0-1\n", resolved_map)
+
+            def compute_key(deps: str = "sh python") -> str:
+                out = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        f"set -euo pipefail\nARCH=aarch64\n{key_fns}\naur_dep_cache_key {str(dep_dir)!r} {deps}",
+                    ],
+                    env={**os.environ, "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}"},
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                return out.stdout.strip()
+
+            k1 = compute_key()
+            k1_sh = compute_key("sh")
+            self.assertEqual(len(k1), 64)
+            self.assertEqual(k1, compute_key())
+
+            # Bumping ONLY the provider ('bash') of virtual dependency 'sh' invalidates key
+            qi_file.write_text(
+                "Name            : bash\n"
+                "Version         : 5.3.1-1\n"
+                "Provides        : sh\n\n"
+                "Name            : python\n"
+                "Version         : 3.14.1-1\n"
+                "Provides        : None\n",
+                encoding="utf-8",
+            )
+            self.assertNotEqual(k1_sh, compute_key("sh"))
+            k_virtual = compute_key()
+            self.assertNotEqual(k1, k_virtual)
+
+            # Direct dependency ('python') version upgrade also invalidates key
+            qi_file.write_text(
+                "Name            : bash\n"
+                "Version         : 5.3.1-1\n"
+                "Provides        : sh\n\n"
+                "Name            : python\n"
+                "Version         : 3.15.0-1\n"
+                "Provides        : None\n",
+                encoding="utf-8",
+            )
+            k2 = compute_key()
+            self.assertNotEqual(k_virtual, k2)
+
+            # Changing PKGBUILD invalidates key
+            (dep_dir / "PKGBUILD").write_text("pkgname=dep\npkgver=1.1\n", encoding="utf-8")
+            k3 = compute_key()
+            self.assertNotEqual(k2, k3)
+
+            # VCS pkgver() and SKIP checksum exclusion regex
+            guard = r"""! grep -Eq '^[[:space:]]*pkgver[[:space:]]*\(\)|'\''SKIP'\''|"SKIP"' "$1" """
+            for bad_content in ("pkgname=x\npkgver() { echo 1; }\n", "sha256sums=('SKIP')\n", 'sha256sums=("SKIP")\n'):
+                p = root / "check-pkgbuild"
+                p.write_text(bad_content, encoding="utf-8")
+                chk = subprocess.run(["bash", "-c", guard, "_", str(p)], check=False)
+                self.assertNotEqual(chk.returncode, 0, bad_content)
+            (root / "check-pkgbuild").write_text("pkgname=ok\nsha256sums=('abc123')\n", encoding="utf-8")
+            chk_ok = subprocess.run(["bash", "-c", guard, "_", str(root / "check-pkgbuild")], check=False)
+            self.assertEqual(chk_ok.returncode, 0)
+
+            # Host-side pruning of >120m .tmp.* and >30d entries while preserving fresh entries
+            pkg = self._make_pkg(root, "('x86_64')")
+            bindir, _ = self._make_fake_docker(
+                root,
+                "pathlib.Path(out_dir, 'reason').write_text('ok\\n')\nsys.exit(0)\n",
+            )
+            prune_cache = root / "prune-cache"
+            pac_dir = prune_cache / "x86_64" / "pacman"
+            aur_dir = prune_cache / "x86_64" / "aur-pkgs"
+            pac_dir.mkdir(parents=True)
+            aur_dir.mkdir(parents=True)
+            old_tmp = pac_dir / ".tmp.123.stale"
+            old_tmp.write_text("x", encoding="utf-8")
+            old_pkg = pac_dir / "old-1.0-1-x86_64.pkg.tar.zst"
+            old_pkg.write_text("x", encoding="utf-8")
+            fresh_pkg = pac_dir / "fresh-1.0-1-x86_64.pkg.tar.zst"
+            fresh_pkg.write_text("x", encoding="utf-8")
+            old_aur = aur_dir / "oldkey"
+            old_aur.mkdir()
+            fresh_aur = aur_dir / "freshkey"
+            fresh_aur.mkdir()
+            three_hours_ago = time.time() - 3 * 3600
+            thirty_one_days_ago = time.time() - 31 * 86400
+            os.utime(old_tmp, (three_hours_ago, three_hours_ago))
+            os.utime(old_pkg, (thirty_one_days_ago, thirty_one_days_ago))
+            os.utime(old_aur, (thirty_one_days_ago, thirty_one_days_ago))
+
+            prune_res = subprocess.run(
+                ["bash", str(VERIFY_SH), str(pkg)],
+                env={
+                    **os.environ,
+                    "PATH": f"{bindir}:{os.environ.get('PATH', '')}",
+                    "VERIFY_PACKAGE_CACHE_DIR": str(prune_cache),
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(prune_res.returncode, 0, prune_res.stdout + prune_res.stderr)
+            self.assertFalse(old_tmp.exists())
+            self.assertFalse(old_pkg.exists())
+            self.assertFalse(old_aur.exists())
+            self.assertTrue(fresh_pkg.exists())
+            self.assertTrue(fresh_aur.exists())
+
+
+
 if __name__ == "__main__":
     unittest.main()
