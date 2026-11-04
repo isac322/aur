@@ -367,7 +367,7 @@ class VerifyPackageGateTest(unittest.TestCase):
 
     def test_third_party_node_modules_and_optdepends_systemd_and_arch_labeled_elf(self) -> None:
         owned = [
-            "/usr/lib/opencode-desktop/node_modules/electron-updater/out/NsisUpdater.js",
+            "/usr/lib/stably-orca/node_modules/electron-updater/out/NsisUpdater.js",
             "/usr/lib/node_modules/vercel/node_modules/@vercel/fun/dist/src/runtimes/nodejs/bootstrap",
             "/usr/lib/systemd/user/stably-orca-kwin-virtual@.service",
             "/usr/lib/stably-orca/ripgrep/linux-arm64/wrong-arch",
