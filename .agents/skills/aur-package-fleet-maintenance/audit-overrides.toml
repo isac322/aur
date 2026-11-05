@@ -11,12 +11,6 @@ repo = "nesszer/linear-cli"
 tag_prefix = "v"
 required_assets = ["linear-cli-x86_64-unknown-linux-gnu.tar.gz"]
 
-[packages.linear-cli-bin]
-channel = "github"
-repo = "nesszer/linear-cli"
-tag_prefix = "v"
-required_assets = ["linear-cli-x86_64-unknown-linux-gnu.tar.gz"]
-
 [packages.posthog-cli]
 channel = "github"
 repo = "PostHog/posthog"
