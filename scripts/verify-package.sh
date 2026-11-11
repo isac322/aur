@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# verify-package.sh <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...'] [--no-cache]
+# verify-package.sh <pkgdir> [--arch native|x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...'] [--no-cache]
 #
 # Deterministic pre-push gate for one AUR package, run from the macOS host via
 # Docker Arch containers (x86_64: archlinux:base-devel, aarch64/armv7h:
 # menci/archlinuxarm:base-devel). i686 uses the amd64 image with the official
 # multilib compiler and 32-bit runtime, then installs and executes i686 output.
 # This checks the i686 ABI, not Archlinux32 repository compatibility.
+# Defaults to the host architecture; cross-architecture checks require --arch.
 # Per arch it checks, in a clean container:
 #   - `makepkg --printsrcinfo` is byte-identical to the committed .SRCINFO
 #   - `makepkg -s -f` succeeds
@@ -22,14 +23,14 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <pkgdir> [--arch x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...'] [--no-cache]" >&2
+  echo "usage: $0 <pkgdir> [--arch native|x86_64|aarch64|armv7h|i686|all] [--smoke 'cmd ...'] [--no-cache]" >&2
   exit 2
 }
 
 [ $# -ge 1 ] || usage
 pkgdir_arg=$1
 shift
-want_arch=all
+want_arch=native
 smoke=${VERIFY_SMOKE:-}
 use_cache=1
 [ "${VERIFY_PACKAGE_NO_CACHE:-0}" = 1 ] && use_cache=0
@@ -41,7 +42,7 @@ while [ $# -gt 0 ]; do
     *) usage ;;
   esac
 done
-case $want_arch in x86_64|aarch64|armv7h|i686|all) ;; *) usage ;; esac
+case $want_arch in native|x86_64|aarch64|armv7h|i686|all) ;; *) usage ;; esac
 
 pkgdir=$(cd "$pkgdir_arg" && pwd)
 [ -f "$pkgdir/PKGBUILD" ] || { echo "error: $pkgdir/PKGBUILD not found" >&2; exit 2; }
@@ -73,24 +74,26 @@ while IFS= read -r a; do
 done <<< "$declared"
 
 host_arch=${VERIFY_HOST_ARCH:-$(uname -m)}
-is_any=0
-any_fallback_x86=0
+case $host_arch in
+  arm64) host_arch=aarch64 ;;
+  armv7l) host_arch=armv7h ;;
+esac
+if [ "$want_arch" = native ]; then
+  case $host_arch in
+    x86_64|aarch64|armv7h|i686) want_arch=$host_arch ;;
+    *) echo "error: unsupported host architecture: $host_arch" >&2; exit 2 ;;
+  esac
+fi
 arches=()
 if [ "$want_arch" = all ] && [ ${#unsupported_arches[@]} -gt 0 ]; then
   echo "error: unsupported declared architecture(s): ${unsupported_arches[*]}; refusing --arch all before Docker" >&2
   exit 2
 fi
 if printf '%s\n' "$declared" | grep -qx any; then
-  is_any=1
   if [ "$want_arch" = all ]; then
     case $host_arch in
-      arm64|aarch64)
-        arches=(aarch64)
-        any_fallback_x86=1
-        ;;
-      *)
-        arches=(x86_64)
-        ;;
+      x86_64|aarch64|armv7h|i686) arches=("$host_arch") ;;
+      *) echo "error: unsupported host architecture: $host_arch" >&2; exit 2 ;;
     esac
   else
     arches=("$want_arch")
@@ -851,14 +854,6 @@ for a in "${arches[@]}"; do
   run_reason=""
   if run_arch_container "$a"; then
     results+=("VERIFY $pkgbase $a PASS ok")
-  elif [ "$is_any" -eq 1 ] && [ "$any_fallback_x86" -eq 1 ] && [ "$a" = aarch64 ] && [[ $run_reason == aur-dependency:* ]]; then
-    results+=("VERIFY $pkgbase aarch64 SKIP $run_reason (fallback x86_64)")
-    if run_arch_container x86_64; then
-      results+=("VERIFY $pkgbase x86_64 PASS ok")
-    else
-      results+=("VERIFY $pkgbase x86_64 FAIL $run_reason")
-      failed=1
-    fi
   else
     results+=("VERIFY $pkgbase $a FAIL $run_reason")
     failed=1

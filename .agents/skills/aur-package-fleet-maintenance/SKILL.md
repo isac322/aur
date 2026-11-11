@@ -157,7 +157,7 @@ checksum·pin 변경은 배열·변수 이름 기준으로 전체를 교체한�
 dependency, compiler, toolchain, Meson/CMake나 `PKG_CONFIG_PATH` 등 환경을 바꿨다면 새 checkout, cleanbuild, `setup --wipe` 등 clean state에서 재검증한다.
 일부 dependency archive만 푼 partial root에 전역 `PKG_CONFIG_SYSROOT_DIR`를 설정하지 않는다.
 
-검증 환경은 다음 순서로 선택한다. 이 macOS host에서는 `scripts/verify-package.sh <pkgdir>`(`x86_64`·`aarch64`·`armv7h`·`i686` Docker Arch container; `arch=('any')`는 호스트 네이티브 arch 우선 실행 후 Arch Linux ARM 미제공 공식 의존성 누락 시 `x86_64` 자동 fallback, 호스트 공유 패키지·AUR 의존성 캐시 재사용)가 1~2를 충족하는 표준 환경이다.
+검증 환경은 다음 순서로 선택한다. `scripts/verify-package.sh <pkgdir>`는 현재 호스트의 네이티브 architecture만 Docker Arch container에서 검증한다(macOS `arm64` → `aarch64`). `arch=('any')`도 동일하며 다른 architecture로 자동 fallback하지 않는다. 호스트 architecture를 지원하지 않거나 해당 환경의 의존성을 충족하지 못하면 보류한다. 호스트 공유 패키지·AUR 의존성 캐시는 재사용한다. AUR 업데이트 자동화에서는 `--arch all` 또는 외국 architecture를 지정하지 않는다. 별도로 사용자가 교차 검증을 요청한 경우에만 `--arch <arch>|all`을 사용한다.
 `check.py audit`은 upstream 최신판 판정 도구일 뿐 검증이 아니며, `current` 결과를 validation 근거로 쓰지 않는다.
 
 1. Arch clean chroot/devtools
@@ -172,7 +172,7 @@ Python은 archive 안 `site-packages`를 `PYTHONPATH`에 넣고 entry point를 �
 
 아래 배포 gate를 통과한 package는 수정·버전업 승인 범위 안에서 별도 commit/push 요청을 기다리지 않고 모두 배포한다. 사용자가 같은 요청에서 commit이나 push를 명시적으로 금지한 package만 제외한다.
 
-배포 gate: 이번 실행에서 commit할 바로 그 파일 상태로 `scripts/verify-package.sh <pkgdir>`가 선언된 모든 arch에 `VERIFY <pkgbase> <arch> PASS`를 출력한 package만 commit·push한다(`arch=('any')`는 실행된 호스트 네이티브 arch 또는 `x86_64` fallback의 `VERIFY <pkgbase> <arch> PASS` 1건으로 충족하며, fallback 발생 시 직전 `VERIFY <pkgbase> aarch64 SKIP ...` 줄을 함께 인용한다). 그 줄을 tally 근거로 그대로 인용한다.
+배포 gate: 이번 실행에서 commit할 바로 그 파일 상태로 `scripts/verify-package.sh <pkgdir>`가 현재 호스트 architecture에 `VERIFY <pkgbase> <arch> PASS`를 출력한 package만 commit·push한다. `arch=('any')`도 호스트 검증 1건으로 충족한다. 다른 선언 architecture의 빌드·실행 검증은 요구하지 않으며 미실행으로 보고한다. 모든 선언 architecture의 source asset·checksum 검증은 Step 4대로 유지한다. 호스트 architecture 미지원은 `validation_blocked`로 보류하며 다른 architecture로 대신 검증하지 않는다. PASS 줄을 tally 근거로 그대로 인용한다.
 gate 이후 파일이 바뀌면 다시 실행한다. validation이 `partial`·`blocked`이면 push하지 않고 `validation_blocked`, `failed`이면 `validation_failed`로 기록한다.
 
 1. 모노레포 루트에서 패키지 파일만 독립 커밋한다: `git add <pkg>/PKGBUILD <pkg>/.SRCINFO && git commit -m "..."`

@@ -512,68 +512,46 @@ class VerifyPackageDriverTest(unittest.TestCase):
                 self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
                 self.assertIn(f"VERIFY demo {explicit} PASS ok", res.stdout)
 
-    def test_any_arch_fallback_only_on_aur_dependency_failure(self) -> None:
+    def test_native_selection_and_failure_never_start_foreign_architecture(self) -> None:
         import json
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            pkg = self._make_pkg(root, "('any')")
             bindir, calls_log = self._make_fake_docker(
                 root,
-                "mode = os.environ['FAKE_MODE']\n"
-                "if mode == 'fallback_ok' and arch == 'aarch64':\n"
-                "    pathlib.Path(out_dir, 'reason').write_text('aur-dependency:only-x86\\n')\n"
-                "    sys.exit(1)\n"
-                "if mode == 'fallback_ok' and arch == 'x86_64':\n"
-                "    pathlib.Path(out_dir, 'reason').write_text('ok\\n')\n"
-                "    sys.exit(0)\n"
-                "if mode == 'build_fail':\n"
-                "    pathlib.Path(out_dir, 'reason').write_text('build\\n')\n"
-                "    sys.exit(1)\n"
-                "pathlib.Path(out_dir, 'reason').write_text('aur-dependency:missing-everywhere\\n')\n"
-                "sys.exit(1)\n",
+                "reason = os.environ.get('FAKE_REASON', 'ok')\n"
+                "pathlib.Path(out_dir, 'reason').write_text(reason + '\\n')\n"
+                "sys.exit(0 if reason == 'ok' else 1)\n",
             )
             env = {
                 **os.environ,
                 "PATH": f"{bindir}:{os.environ.get('PATH', '')}",
-                "VERIFY_HOST_ARCH": "arm64",
                 "VERIFY_PACKAGE_NO_CACHE": "1",
             }
-
-            res = subprocess.run(
-                ["bash", str(VERIFY_SH), str(pkg)],
-                env={**env, "FAKE_MODE": "fallback_ok"},
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
-            self.assertIn("VERIFY demo aarch64 SKIP aur-dependency:only-x86 (fallback x86_64)", res.stdout)
-            self.assertIn("VERIFY demo x86_64 PASS ok", res.stdout)
-            self.assertNotIn("FAIL", res.stdout)
-
-            calls_log.unlink(missing_ok=True)
-            res_build = subprocess.run(
-                ["bash", str(VERIFY_SH), str(pkg)],
-                env={**env, "FAKE_MODE": "build_fail"},
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(res_build.returncode, 1)
-            calls = [json.loads(line) for line in calls_log.read_text().splitlines()]
-            self.assertEqual([c["arch"] for c in calls], ["aarch64"])
-            self.assertIn("VERIFY demo aarch64 FAIL build", res_build.stdout)
-
-            res_both = subprocess.run(
-                ["bash", str(VERIFY_SH), str(pkg)],
-                env={**env, "FAKE_MODE": "both_fail"},
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(res_both.returncode, 1)
-            self.assertIn("VERIFY demo x86_64 FAIL aur-dependency:missing-everywhere", res_both.stdout)
+            for declaration, host, reason, expected, code in (
+                ("('x86_64' 'aarch64')", "arm64", "ok", ["aarch64"], 0),
+                ("('x86_64' 'aarch64')", "x86_64", "ok", ["x86_64"], 0),
+                ("('any')", "arm64", "aur-dependency:only-x86", ["aarch64"], 1),
+                ("('any')", "arm64", "build", ["aarch64"], 1),
+                ("('x86_64')", "arm64", "ok", [], 2),
+                ("('any')", "unknown", "ok", [], 2),
+            ):
+                with self.subTest(declaration=declaration, host=host, reason=reason):
+                    pkg = self._make_pkg(root, declaration)
+                    calls_log.unlink(missing_ok=True)
+                    result = subprocess.run(
+                        ["bash", str(VERIFY_SH), str(pkg)],
+                        env={**env, "VERIFY_HOST_ARCH": host, "FAKE_REASON": reason},
+                        text=True, capture_output=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                    calls = (
+                        [json.loads(line)["arch"] for line in calls_log.read_text().splitlines()]
+                        if calls_log.exists() else []
+                    )
+                    self.assertEqual(calls, expected)
+                    if code == 1:
+                        self.assertIn(f"VERIFY demo aarch64 FAIL {reason}", result.stdout)
 
     def test_cache_mount_isolation_and_no_cache_controls(self) -> None:
         import json
@@ -592,7 +570,7 @@ class VerifyPackageDriverTest(unittest.TestCase):
                 "VERIFY_PACKAGE_CACHE_DIR": str(cache_dir),
             }
             res = subprocess.run(
-                ["bash", str(VERIFY_SH), str(pkg)],
+                ["bash", str(VERIFY_SH), str(pkg), "--arch", "all"],
                 env=env,
                 text=True,
                 capture_output=True,
@@ -608,7 +586,7 @@ class VerifyPackageDriverTest(unittest.TestCase):
 
             calls_log.unlink(missing_ok=True)
             res_nc = subprocess.run(
-                ["bash", str(VERIFY_SH), str(pkg), "--no-cache"],
+                ["bash", str(VERIFY_SH), str(pkg), "--arch", "all", "--no-cache"],
                 env=env,
                 text=True,
                 capture_output=True,
@@ -782,7 +760,7 @@ class VerifyPackageDriverTest(unittest.TestCase):
             os.utime(old_aur, (thirty_one_days_ago, thirty_one_days_ago))
 
             prune_res = subprocess.run(
-                ["bash", str(VERIFY_SH), str(pkg)],
+                ["bash", str(VERIFY_SH), str(pkg), "--arch", "x86_64"],
                 env={
                     **os.environ,
                     "PATH": f"{bindir}:{os.environ.get('PATH', '')}",
