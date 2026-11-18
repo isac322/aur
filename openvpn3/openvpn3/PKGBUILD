@@ -3,8 +3,8 @@
 
 _pkgname=openvpn3-linux
 pkgname=openvpn3
-pkgver=27.1
-pkgrel=2
+pkgver=27.2
+pkgrel=1
 pkgdesc='OpenVPN 3 Linux client'
 arch=('x86_64' 'aarch64')
 url="https://codeberg.org/OpenVPN/$_pkgname"
@@ -12,15 +12,17 @@ license=('AGPL-3.0-only')
 conflicts=('openvpn3-git')
 depends=(
   'glib2>=2.56' 'jsoncpp>=0.10.5' 'libcap-ng>=0.7.5' 'lz4>=1.8.4' 'util-linux-libs>=2.23.2' 'protobuf>=2.4.0'
-  'python-dbus' 'python-gobject' 'python-systemd' 'tinyxml2>=2.1.0' 'libnl>=3.2.29' 'gdbuspp>=3' 
+  'python-dbus' 'python-gobject' 'python-systemd' 'tinyxml2>=2.1.0' 'libnl>=3.2.29' 'gdbuspp>=3' 'openssl-3'
 )
 optdepends=(
-  'openssl: OpenSSL version' 'mbedtls: mbed TLS version' 'polkit>=0.112: for systemd-resolved integration'
+  'polkit>=0.112: for systemd-resolved integration'
   'repkg: Automatically rebuild the package on dependency updates'
 )
 makedepends=(
   'python-docutils' 'python-jinja' 'meson'
 )
+# The post-install integration test needs the openvpn system account.
+checkdepends=('dbus' 'openvpn')
 source=(
   "https://swupdate.openvpn.net/community/releases/${_pkgname}-${pkgver}.tar.xz"
   'openvpn3.rule'
@@ -28,7 +30,7 @@ source=(
   'netcfg-dco.patch'
 )
 sha256sums=(
-  '842162e48f7fc756a517b9f5807fb993152e210e996df4a267c3ff2ab40142d6'
+  '76640f04df170205325ce32626376fd890ec352bdd305536fbb7c842f0a20a82'
   'ec0b8e28ae77b4b074d3eb8a084626e6dcfc587a07bef5d53fe1c6e160c0fc01'
   '045e914bb6fff5a082314dfc805bb511c9a80170619fa1e94a07825fa977c90a'
   '6c6b34a37c033e57aa4d699e09fd0089b0fe0d0e801f5045b172509b2661afe3'
@@ -41,7 +43,9 @@ prepare() {
 }
 
 build() {
-  env CXXFLAGS="$CXXFLAGS -Wno-error=non-virtual-dtor" \
+  # The bundled Core in 27.2 uses X.509 APIs incompatible with OpenSSL 4.
+  PKG_CONFIG_PATH="/usr/lib/openssl-3/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
+    CXXFLAGS="$CXXFLAGS -Wno-error=non-virtual-dtor" \
     arch-meson \
     -Dselinux=disabled \
     -Dselinux_policy=disabled \
@@ -54,7 +58,18 @@ build() {
 }
 
 check() {
-  meson test -C _builddir
+  # Run the integration suites with private D-Bus and real OpenVPN services.
+  dbus-run-session -- bash -ec '
+    export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
+    trap '"'"'for pid in $(jobs -pr); do kill "$pid"; done; wait'"'"' EXIT
+    _builddir/src/log/openvpn3-service-log &
+    gdbus wait --session --timeout 10 net.openvpn.v3.log
+    _builddir/src/configmgr/openvpn3-service-configmgr --log-file stdout: &
+    gdbus wait --session --timeout 10 net.openvpn.v3.configuration
+    meson test -C _builddir --print-errorlogs
+  '
+  readelf -d _builddir/src/client/openvpn3-service-client |
+    grep -F 'Shared library: [libssl.so.3]'
 }
 
 package() {
